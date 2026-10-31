@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '5';
+  var CODE_VERSION = '6';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -35,7 +35,7 @@
     cursorBar: 0,          // נקודת ההתחלה, במספר תיבה (0 = תיבה 1)
     take: null,            // { data, sr, start, punch, latency }
     stoppedAt: 0,          // מיקום הסמן הלבן כשהכול עצור
-    level: (function () { try { return localStorage.getItem('bli-level') || 'medium'; } catch (e) { return 'medium'; } })()
+    level: (function () { try { var v = localStorage.getItem('bli-level2'); return v && v !== 'gentle' ? v : 'strong'; } catch (e) { return 'strong'; } })()
   };
 
   var ctx = null, clickBus, takeBus, buffers = {};
@@ -480,7 +480,7 @@
       var was = S.mode === 'play', pos = songNow();
       if (was) stop();
       S.level = lv;
-      try { localStorage.setItem('bli-level', lv); } catch (e) {}
+      try { localStorage.setItem('bli-level2', lv); } catch (e) {}
       if (lv === 'orig') tk.useClean = false;
       else {
         if (tk.cleanLevel !== lv) { tk.clean = window.ClickDSP.stage2(tk.s1, tk.est, window.ClickDSP.LEVELS[lv]); tk.cleanLevel = lv; }

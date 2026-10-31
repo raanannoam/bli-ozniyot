@@ -255,8 +255,9 @@
   var LEVELS = {
     gentle: { c: 0.02, beta: 4, floor: 0.25 },
     medium: { c: 0.02, beta: 4, floor: 0.1 },
-    strong: { c: 0.05, beta: 8, floor: 0.05 },
-    max:    { c: 0.1,  beta: 32, floor: 0.01 }
+    // חזק ומקסימום כוללים ריפוי: ממלאים את החורים בגיטרה לפי מה שהיה רגע לפני ואחרי הקליק
+    strong: { c: 0.05, beta: 8, floor: 0.05, heal: 1 },
+    max:    { c: 0.1,  beta: 32, floor: 0.01, heal: 1 }
   };
 
   function removeClicks(data, sr, clicks, opts) {
