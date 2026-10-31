@@ -26,7 +26,8 @@
     mode: 'idle',          // idle | play | rec
     cursorBar: 0,          // נקודת ההתחלה, במספר תיבה (0 = תיבה 1)
     take: null,            // { data, sr, start, punch, latency }
-    stoppedAt: 0           // מיקום הסמן הלבן כשהכול עצור
+    stoppedAt: 0,          // מיקום הסמן הלבן כשהכול עצור
+    level: (function () { try { return localStorage.getItem('bli-level') || 'strong'; } catch (e) { return 'strong'; } })()
   };
 
   var ctx = null, clickBus, takeBus, buffers = {};
@@ -227,10 +228,13 @@
       return { idx: Math.round((c.t + lat - tk.start) * tk.sr), pos: c.pos, pre: c.pre };
     });
     try {
-      var r = window.ClickDSP.removeClicks(tk.data, tk.sr, list, {});
+      var r = window.ClickDSP.removeClicks(tk.data, tk.sr, list, { level: S.level === 'orig' ? 'strong' : S.level });
       if (r.ok) {
-        tk.clean = r.clean; tk.useClean = true;
-        setStatus('הקליק הוסר מההקלטה. אפשר להשוות למקור בכפתור למעלה.');
+        tk.s1 = r.stage1; tk.est = r.est;
+        tk.clean = S.level === 'orig' ? window.ClickDSP.stage2(r.stage1, r.est, window.ClickDSP.LEVELS.strong) : r.clean;
+        tk.cleanLevel = S.level === 'orig' ? 'strong' : S.level;
+        tk.useClean = S.level !== 'orig';
+        setStatus('הקליק הוסר. למעלה אפשר לבחור כמה חזק להסיר, או לשמוע את המקור.');
       } else setStatus('לא הצלחתי ללמוד את הקליק מההקדמה, אז הוא נשאר בהקלטה.');
     } catch (e) {
       setStatus('משהו השתבש בהסרת הקליק, ההקלטה המקורית נשמרה.');
@@ -460,12 +464,22 @@
   $('to-cursor').addEventListener('click', function () { var was = S.mode; if (was !== 'idle') stop(); S.stoppedAt = cursorSec(); if (was === 'play') play(); else render(); });
   $('to-start').addEventListener('click', function () { var was = S.mode; if (was !== 'idle') stop(); S.stoppedAt = 0; wrap.scrollLeft = 0; if (was === 'play') play(); else render(); });
   $('save-btn').addEventListener('click', saveTake);
-  $('ab-btn').addEventListener('click', function () {
-    if (!S.take || !S.take.clean) return;
-    var was = S.mode === 'play', pos = songNow();
-    if (was) stop();
-    S.take.useClean = !S.take.useClean;
-    if (was) { S.stoppedAt = Math.max(0, pos); play(); } else render();
+  document.querySelectorAll('.lv').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var tk = S.take;
+      if (!tk || !tk.s1) return;
+      var lv = b.dataset.level;
+      var was = S.mode === 'play', pos = songNow();
+      if (was) stop();
+      S.level = lv;
+      try { localStorage.setItem('bli-level', lv); } catch (e) {}
+      if (lv === 'orig') tk.useClean = false;
+      else {
+        if (tk.cleanLevel !== lv) { tk.clean = window.ClickDSP.stage2(tk.s1, tk.est, window.ClickDSP.LEVELS[lv]); tk.cleanLevel = lv; }
+        tk.useClean = true;
+      }
+      if (was) { S.stoppedAt = Math.max(0, pos); play(); } else render();
+    });
   });
   $('click-vol').addEventListener('input', function (e) { S.clickVol = e.target.value / 100; if (clickBus) clickBus.gain.setTargetAtTime(S.clickVol, ctx.currentTime, 0.01); });
   $('take-vol').addEventListener('input', function (e) { S.takeVol = e.target.value / 100; if (takeBus) takeBus.gain.setTargetAtTime(S.takeVol, ctx.currentTime, 0.01); });
@@ -486,9 +500,12 @@
     if (S.mode === 'rec') setStatus('הקדמה של ' + (S.pre === 1 ? 'תיבה אחת' : '2 תיבות') + ', ואז הקלטה מתיבה ' + (S.cursorBar + 1) + ' עד שעוצרים');
     else if (S.mode === 'play') setStatus('מנגן');
     $('latency').textContent = S.take && S.take.measured !== null ? 'השהיה: ' + Math.round(S.take.measured * 1000) + 'ms' : '';
-    var ab = $('ab-btn');
-    ab.hidden = !(S.take && S.take.clean);
-    if (S.take && S.take.clean) { ab.setAttribute('aria-pressed', String(S.take.useClean)); ab.textContent = S.take.useClean ? 'קליק הוסר' : 'מקור, עם קליק'; }
+    var hasClean = !!(S.take && S.take.s1);
+    $('levels').hidden = !hasClean;
+    if (hasClean) {
+      var cur = S.take.useClean ? S.take.cleanLevel : 'orig';
+      document.querySelectorAll('.lv').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.level === cur)); });
+    }
     renderDrum();
     draw();
   }

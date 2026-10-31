@@ -137,8 +137,7 @@
   // ---------- שלב 2 ----------
   function stage2(y, est, opts) {
     opts = opts || {};
-    // ברירת מחדל "חזק מאוד": נבדק על הקלטות אמיתיות, כ־51 דציבלים לקליק, ופגיעה זניחה בכלי
-    var c = opts.c == null ? 0.1 : opts.c, beta = opts.beta == null ? 32 : opts.beta, floor = opts.floor == null ? 0.01 : opts.floor;
+    var c = opts.c == null ? 0.05 : opts.c, beta = opts.beta == null ? 8 : opts.beta, floor = opts.floor == null ? 0.05 : opts.floor;
     var N = 1024, HOP = 256, nb = N / 2 + 1;
     var win = new Float32Array(N);
     for (var i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
@@ -182,14 +181,14 @@
       }
       G.push(g);
     }
-    // החלקה של הרווחים 3×3, כדי שלא יישמעו "בועות"
+    // החלקה של הרווחים: 5 מסגרות בזמן × 3 בתדר, כדי שהשינוי יהיה רך ולא "קופצני"
     var out = Float32Array.from(y), acc = new Float64Array(y.length + N), wsum = new Float64Array(y.length + N);
     for (f = 0; f < nF; f++) {
       if (!act[f]) continue;
       var gs = new Float64Array(nb);
       for (k = 0; k < nb; k++) {
         var sum = 0, cnt = 0;
-        for (df = -1; df <= 1; df++) {
+        for (df = -2; df <= 2; df++) {
           ff = f + df;
           for (dk = -1; dk <= 1; dk++) {
             kk = k + dk; if (kk < 0 || kk >= nb) continue;
@@ -217,12 +216,22 @@
     return out;
   }
 
+  // רמות עוצמה לשלב 2. ככל שחזק יותר, פחות קליק, אבל יותר סיכוי ל"וואו" על הכלי
+  var LEVELS = {
+    gentle: { c: 0.02, beta: 4, floor: 0.25 },
+    medium: { c: 0.02, beta: 4, floor: 0.1 },
+    strong: { c: 0.05, beta: 8, floor: 0.05 },
+    max:    { c: 0.1,  beta: 32, floor: 0.01 }
+  };
+
   function removeClicks(data, sr, clicks, opts) {
+    opts = opts || {};
     var r = stage1(data, sr, clicks, opts);
     if (!r.ok) return { clean: Float32Array.from(data), ok: false };
-    return { clean: stage2(r.clean, r.est, opts), stage1: r.clean, ok: true };
+    var lv = LEVELS[opts.level || 'strong'];
+    return { clean: stage2(r.clean, r.est, Object.assign({}, lv, opts)), stage1: r.clean, est: r.est, ok: true };
   }
 
-  var api = { removeClicks: removeClicks, stage1: stage1, stage2: stage2, sincShift: sincShift, fft: fft };
+  var api = { removeClicks: removeClicks, stage1: stage1, stage2: stage2, LEVELS: LEVELS, sincShift: sincShift, fft: fft };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ClickDSP = api;
 })(this);

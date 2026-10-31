@@ -98,8 +98,9 @@ body {
 .status { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recording .status { color: #FFC2C8; }
 .latency { font-size: 11px; color: var(--muted); }
-.btn.ab { min-height: 30px; font-size: 12px; padding: 0 12px; border-radius: 15px; flex: none; }
-.btn.ab[hidden] { display: none; }
+.levels { display: flex; gap: 2px; padding: 2px; border-radius: 16px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); flex: none; }
+.levels[hidden] { display: none; }
+.btn.lv { min-height: 30px; font-size: 12px; padding: 0 9px; border-radius: 14px; border-color: transparent; background: transparent; box-shadow: none; }
 .timeline-wrap { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; position: relative; }
 #timeline { display: block; height: 100%; touch-action: pan-x; }
 
@@ -119,3 +120,4 @@ input.vertical { writing-mode: vertical-lr; direction: rtl; flex: 1; width: 28px
   .rotate svg { width: 64px; height: 64px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 }
 @media (prefers-reduced-motion: reduce) { .btn, .rec-dot { transition: none; } }
+.btn.lv[aria-pressed="true"] { background: var(--acc); color: var(--bg); font-weight: 700; }

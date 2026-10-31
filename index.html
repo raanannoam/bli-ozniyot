@@ -59,7 +59,13 @@
   <main class="center">
     <div class="status-row">
       <span class="status" id="status">נגיעה בציר הזמן קובעת מאיפה מקליטים</span>
-      <button class="btn ab" id="ab-btn" hidden aria-pressed="true">קליק הוסר</button>
+      <div class="levels" id="levels" role="group" aria-label="הסרת קליק" hidden>
+        <button class="btn lv" data-level="orig">מקור</button>
+        <button class="btn lv" data-level="gentle">עדין</button>
+        <button class="btn lv" data-level="medium">בינוני</button>
+        <button class="btn lv" data-level="strong">חזק</button>
+        <button class="btn lv" data-level="max">מקסימום</button>
+      </div>
       <span class="latency num" id="latency"></span>
     </div>
     <div class="glass timeline-wrap" id="timeline-wrap" dir="ltr">
