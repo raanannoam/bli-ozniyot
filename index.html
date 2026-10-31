@@ -8,7 +8,7 @@
 <title>בלי אוזניות</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 <div class="app" id="app">
@@ -50,10 +50,21 @@
     </div>
 
     <div class="spacer"></div>
-    <button class="btn" id="save-btn" disabled>
-      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
-      שמירת ההקלטה כקובץ
-    </button>
+    <div class="mix-btns">
+      <button class="btn mix-in" id="mixin-btn" disabled>
+        הכנס למיקס
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v16M5 13l7 7 7-7"/></svg>
+      </button>
+      <div class="row">
+        <button class="btn grow" id="mixlist-btn">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+          מה יש במיקס <span class="num" id="mix-count"></span>
+        </button>
+        <button class="btn small" id="save-btn" disabled aria-label="שמירת ערוץ העבודה כקובץ">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
+        </button>
+      </div>
+    </div>
   </aside>
 
   <!-- מרכז -->
@@ -87,6 +98,11 @@
       <input type="range" id="click-vol" min="0" max="100" value="90" class="vertical">
       <span class="db num" id="click-db">-5</span>
     </div>
+    <div class="glass fader">
+      <label for="mix-vol">מיקס</label>
+      <input type="range" id="mix-vol" min="0" max="100" value="90" class="vertical mixv">
+      <span class="db num" id="mix-db">-5</span>
+    </div>
     <div class="glass fader meter-box">
       <span class="cap">כניסה</span>
       <div class="meter" aria-hidden="true"><div class="meter-fill" id="meter-fill"></div></div>
@@ -106,6 +122,31 @@
   </div>
 </div>
 
+<div class="sheet" id="name-sheet" hidden>
+  <div class="glass sheet-box narrow" role="dialog" aria-labelledby="name-title">
+    <div class="sheet-head">
+      <h2 id="name-title">איך לקרוא להקלטה?</h2>
+      <span class="sheet-note">הצבע שלה במיקס <i class="dot" id="name-dot"></i></span>
+      <button class="btn small" id="name-close" aria-label="סגירה">✕</button>
+    </div>
+    <input type="text" id="name-input" class="text-in" autocomplete="off">
+    <div class="chips" id="name-chips"></div>
+    <button class="btn mix-in big" id="name-ok">הכנס למיקס
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v16M5 13l7 7 7-7"/></svg></button>
+  </div>
+</div>
+
+<div class="sheet" id="mix-sheet" hidden>
+  <div class="glass sheet-box" role="dialog" aria-labelledby="mix-title">
+    <div class="sheet-head">
+      <h2 id="mix-title">מה יש במיקס</h2>
+      <span class="sheet-note" id="mix-note">כל מה שכבר הוקלט. הוא מתנגן בזמן הקלטה, והאפליקציה מחסירה אותו מההקלטה החדשה.</span>
+      <button class="btn small" id="mix-close" aria-label="סגירה">✕</button>
+    </div>
+    <div class="mix-list" id="mix-list"></div>
+  </div>
+</div>
+
 <div class="sheet" id="inst-sheet" hidden>
   <div class="glass sheet-box" role="dialog" aria-labelledby="inst-title">
     <div class="sheet-head">
@@ -122,8 +163,8 @@
   <p>סובבו את הטלפון לרוחב</p>
 </div>
 
-<script>window.BLI_PAGE_VERSION = "9";</script>
-<script src="dsp.js?v=9"></script>
-<script src="app.js?v=9"></script>
+<script>window.BLI_PAGE_VERSION = "11";</script>
+<script src="dsp.js?v=11"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

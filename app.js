@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '9';
+  var CODE_VERSION = '11';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -42,7 +42,7 @@
 
   // ---------- מצב ----------
   var S = {
-    bpm: 92, meter: '4/4', pre: 1, clickOn: true, instrument: null, clips: [],
+    bpm: 92, meter: '4/4', pre: 1, clickOn: true, instrument: null, clips: [], mix: [], mixVol: Math.pow(10, -10 * 0.5 / 20),
     sound: (function () { try { var v = localStorage.getItem('bli-sound'); return v || 'woodtight'; } catch (e) { return 'woodtight'; } })(),
     clickVol: Math.pow(10, -10 * 0.5 / 20), takeVol: Math.pow(10, -10 * 0.5 / 20),
     mode: 'idle',          // idle | play | rec
@@ -52,7 +52,7 @@
     level: (function () { try { var v = localStorage.getItem('bli-level2'); return v && v !== 'gentle' ? v : 'strong'; } catch (e) { return 'strong'; } })()
   };
 
-  var ctx = null, clickBus, takeBus, buffers = {};
+  var ctx = null, clickBus, takeBus, mixBus, buffers = {}, mixSrc = null, recRef = null;
   var recNode = null, micReady = false, chunks = [];
   var songT0 = 0, nextBeat = 0, schedTimer = null, takeSrc = null, recFrom = 0, recClicks = [], livePeaks = [], liveLat = 0;
   var wakeLock = null, peakHold = 0;
@@ -101,6 +101,7 @@
     catch (e) { ctx = new AC({ latencyHint: 'interactive' }); }
     clickBus = ctx.createGain(); clickBus.gain.value = S.clickVol; clickBus.connect(ctx.destination);
     takeBus = ctx.createGain(); takeBus.gain.value = S.takeVol; takeBus.connect(ctx.destination);
+    mixBus = ctx.createGain(); mixBus.gain.value = S.mixVol; mixBus.connect(ctx.destination);
     await Promise.all(SOUND_ORDER.map(function (k) {
       var f = SOUNDS[k].file;
       return fetch('sounds/' + f + '.wav').then(function (r) { return r.arrayBuffer(); })
@@ -206,12 +207,37 @@
     takeSrc.start(songT0 + begin, begin);
   }
 
+  // ---------- המיכל ----------
+  function hueOf(i) { return (150 + i * 28) % 360; }
+  var mixCache = null;
+  function invalidateMix() { mixCache = null; mixPeaksKey = ''; }
+  function mixBuffer() {
+    if (mixCache) return mixCache;
+    var on = S.mix.filter(function (m) { return !m.muted; });
+    if (!on.length) return null;
+    var len = 0; on.forEach(function (m) { len = Math.max(len, m.data.length); });
+    var out = new Float32Array(len);
+    on.forEach(function (m) { for (var i = 0; i < m.data.length; i++) out[i] += m.data[i]; });
+    return (mixCache = out);
+  }
+  function playMix(fromSec) {
+    var mb = mixBuffer();
+    if (!mb) return;
+    var sr = ctx.sampleRate, begin = Math.max(0, fromSec);
+    if (begin * sr >= mb.length) return;
+    var buf = ctx.createBuffer(1, mb.length, sr);
+    buf.copyToChannel(mb, 0);
+    mixSrc = ctx.createBufferSource(); mixSrc.buffer = buf; mixSrc.connect(mixBus);
+    mixSrc.start(songT0 + begin, begin);
+  }
+
   async function play() {
     await initAudio();
     S.mode = 'play';
     var from = S.stoppedAt;
     startTransport(from);
     playTake(from);
+    playMix(from);
     render();
   }
 
@@ -226,7 +252,11 @@
     chunks = []; recClicks = []; livePeaks = []; liveLat = lastLatency() || 0;
     recFrom = cursorSec() - S.pre * barDur();
     S.mode = 'rec';
+    // מה שהרמקול ינגן מהמיכל, בעוצמה הנוכחית: זה ה"רקע" שנחסיר אחר כך
+    var mb = mixBuffer();
+    recRef = mb ? { data: mb, gain: S.mixVol } : null;
     startTransport(recFrom);
+    playMix(recFrom);
     requestWake();
     render();
   }
@@ -234,6 +264,7 @@
   function stop() {
     clearInterval(schedTimer); schedTimer = null;
     if (takeSrc) { try { takeSrc.stop(); } catch (e) {} takeSrc = null; }
+    if (mixSrc) { try { mixSrc.stop(); } catch (e) {} mixSrc = null; }
     var wasRec = S.mode === 'rec';
     var pos = songNow();
     S.mode = 'idle';
@@ -254,7 +285,8 @@
     var data = new Float32Array(total), at = 0;
     chunks.forEach(function (c) { data.set(c.d, at); at += c.d.length; });
     var start = chunks[0].t - songT0;    // זמן השיר של הדגימה הראשונה, כפי שהמחשב רשם אותה
-    var take = { data: data, sr: ctx.sampleRate, start: start, punch: cursorSec(), preFrom: recFrom, latencyShift: 0, measured: null };
+    var take = { data: data, sr: ctx.sampleRate, start: start, punch: cursorSec(), preFrom: recFrom, latencyShift: 0, measured: null, ref: recRef };
+    recRef = null;
     var lat = measureLatency(take), prev = lastLatency();
     if (lat !== null) { take.measured = lat; take.latencyShift = -lat; rememberLatency(lat); }
     else if (prev !== null) { take.measured = prev; take.latencyShift = -prev; }
@@ -276,14 +308,22 @@
       return { idx: Math.round((c.t + lat - tk.start) * tk.sr), pos: c.pos, pre: c.pre };
     });
     try {
-      var r = window.ClickDSP.removeClicks(tk.data, tk.sr, list, { level: S.level === 'orig' ? 'strong' : S.level });
+      // הרקע כפי שהגיע למיקרופון: המיכל, מוזז בהשהיה שנמדדה
+      var ref = null;
+      if (tk.ref) {
+        ref = new Float32Array(tk.data.length);
+        var off = Math.round((tk.start - lat) * tk.sr), src = tk.ref.data, gref = tk.ref.gain;
+        for (var q = 0; q < ref.length; q++) { var j = q + off; if (j >= 0 && j < src.length) ref[q] = src[j] * gref; }
+      }
+      var r = window.ClickDSP.removeAll(tk.data, tk.sr, list, ref, { level: S.level === 'orig' ? 'strong' : S.level });
       if (r.ok) {
         tk.s1 = r.stage1; tk.est = r.est;
         tk.clean = S.level === 'orig' ? window.ClickDSP.stage2(r.stage1, r.est, window.ClickDSP.LEVELS.strong) : r.clean;
         tk.cleanLevel = S.level === 'orig' ? 'strong' : S.level;
         tk.useClean = S.level !== 'orig';
         invalidateWork();
-        setStatus('הקליק הוסר. למעלה אפשר לבחור כמה חזק להסיר, או לשמוע את המקור.');
+        tk.ref = null;
+        setStatus(r.bgOk ? 'הקליק והמיקס הוסרו מההקלטה. למעלה אפשר לבחור עוצמת הסרה, או לשמוע את המקור.' : 'הקליק הוסר. למעלה אפשר לבחור כמה חזק להסיר, או לשמוע את המקור.');
       } else setStatus('לא הצלחתי ללמוד את הקליק מההקדמה, אז הוא נשאר בהקלטה.');
     } catch (e) {
       setStatus('משהו השתבש בהסרת הקליק, ההקלטה המקורית נשמרה.');
@@ -371,6 +411,7 @@
   function songBars() {
     var end = cursorSec() + barDur() * 2;
     S.clips.forEach(function (c) { end = Math.max(end, clipEnd(c)); });
+    S.mix.forEach(function (m) { end = Math.max(end, m.data.length / m.sr); });
     if (S.mode !== 'idle') end = Math.max(end, songNow() + barDur());
     return Math.max(8, Math.ceil(end / barDur()) + 1);
   }
@@ -411,7 +452,9 @@
     }
     // ההקלטה
     var acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim() || '#6fe0a8';
-    var trackTop = top + 8, trackH = h - top - 16;
+    var mixH = Math.round((h - top) * 0.32), trackTop = top + 8, trackH = h - top - 16 - mixH - 6;
+    var mixTop = trackTop + trackH + 6;
+    drawMix(mixTop, mixH, w);
     var wt = workTrack();
     if (wt) {
       var wsr = S.clips[0].sr, mid = trackTop + trackH / 2, spp = wsr * barDur() / layout.pxPerBar;
@@ -476,6 +519,40 @@
       if (px2 > wrap.scrollLeft + vw * 0.8 || px2 < wrap.scrollLeft) wrap.scrollLeft = Math.max(0, px2 - vw * 0.3);
     }
   }
+  // ערוץ המיכל: גל אחד. כל עמודה בצבע של הקלטה אחרת מבין אלה שמתנגנות באותו רגע, בגובה הממוצע
+  var mixPeaksKey = '', mixPeaks = null;
+  function drawMix(y0, hh, w) {
+    g2.fillStyle = 'rgba(0,0,0,0.22)'; roundRect(2, y0, w - 4, hh, 10); g2.fill();
+    var list = S.mix.map(function (m, i) { return { m: m, i: i }; }).filter(function (o) { return !o.m.muted; });
+    if (!list.length) {
+      g2.fillStyle = 'rgba(167,173,182,0.7)'; g2.font = '500 12px Heebo, sans-serif'; g2.textAlign = 'right';
+      g2.fillText(S.mix.length ? 'כל ההקלטות במיקס מושתקות' : 'המיקס ריק. "הכנס למיקס" מעביר לכאן את ערוץ העבודה', Math.min(w, wrap.clientWidth + wrap.scrollLeft) - 14, y0 + hh / 2 + 4);
+      g2.textAlign = 'start'; return;
+    }
+    var step = 3, key = layout.pxPerBar + '|' + barDur() + '|' + w + '|' + S.mix.length + '|' + list.map(function (o) { return o.i; }).join(',');
+    if (key !== mixPeaksKey) {
+      mixPeaksKey = key; mixPeaks = [];
+      list.forEach(function (o) {
+        var d = o.m.data, sr = o.m.sr, arr = new Float32Array(Math.ceil(w / step));
+        for (var c = 0; c < arr.length; c++) {
+          var i0 = Math.floor((c * step) / layout.pxPerBar * barDur() * sr), i1 = Math.floor(((c + 1) * step) / layout.pxPerBar * barDur() * sr), pk = 0;
+          for (var i = Math.max(0, i0); i < Math.min(d.length, i1); i += 4) { var a = d[i] < 0 ? -d[i] : d[i]; if (a > pk) pk = a; }
+          arr[c] = pk;
+        }
+        mixPeaks.push({ hue: hueOf(o.i), p: arr });
+      });
+    }
+    var mid = y0 + hh / 2, cols = mixPeaks[0].p.length;
+    for (var c = 0; c < cols; c++) {
+      var act = [], sum = 0;
+      for (var k = 0; k < mixPeaks.length; k++) if (mixPeaks[k].p[c] > 0.003) { act.push(mixPeaks[k]); sum += mixPeaks[k].p[c]; }
+      if (!act.length) continue;
+      var avg = sum / act.length, bh = Math.max(1, Math.min(1, avg * 1.4) * (hh / 2 - 5));
+      g2.fillStyle = 'hsl(' + act[c % act.length].hue + ' 62% 60%)';
+      g2.fillRect(c * step, mid - bh, step - 1, bh * 2);
+    }
+  }
+
   function roundRect(x, y, w, h, r) {
     g2.beginPath(); g2.moveTo(x + r, y); g2.arcTo(x + w, y, x + w, y + h, r); g2.arcTo(x + w, y + h, x, y + h, r);
     g2.arcTo(x, y + h, x, y, r); g2.arcTo(x, y, x + w, y, r); g2.closePath();
@@ -622,15 +699,78 @@
   function faderGain(v) { v = +v; return v <= 0 ? 0 : Math.pow(10, (v - 100) * 0.5 / 20); }
   function showDb(id, v) { $(id).textContent = +v <= 0 ? '−∞' : String(Math.round((v - 100) * 0.5)); }
   $('click-vol').addEventListener('input', function (e) { showDb('click-db', e.target.value); });
+  $('mix-vol').addEventListener('input', function (e) { showDb('mix-db', e.target.value); S.mixVol = faderGain(e.target.value); if (mixBus) mixBus.gain.setTargetAtTime(S.mixVol, ctx.currentTime, 0.01); });
   $('take-vol').addEventListener('input', function (e) { showDb('take-db', e.target.value); });
   $('click-vol').addEventListener('input', function (e) { S.clickVol = faderGain(e.target.value); if (clickBus) clickBus.gain.setTargetAtTime(S.clickVol, ctx.currentTime, 0.01); });
   $('take-vol').addEventListener('input', function (e) { S.takeVol = faderGain(e.target.value); if (takeBus) takeBus.gain.setTargetAtTime(S.takeVol, ctx.currentTime, 0.01); });
   document.addEventListener('visibilitychange', function () { if (document.hidden && S.mode === 'play') stop(); });
 
+  // ---------- הכנס למיקס ----------
+  function instName() { var i = INSTRUMENTS.filter(function (x) { return x.k === S.instrument; })[0]; return i ? i.name : ''; }
+  $('mixin-btn').addEventListener('click', function () {
+    if (!S.clips.length || S.mode !== 'idle') return;
+    $('name-input').value = instName() || ('הקלטה ' + (S.mix.length + 1));
+    $('name-dot').style.background = 'hsl(' + hueOf(S.mix.length) + ' 62% 60%)';
+    $('name-chips').innerHTML = INSTRUMENTS.filter(function (i) { return i.k !== 'other'; }).map(function (i) { return '<button data-n="' + i.name + '">' + i.name + '</button>'; }).join('');
+    $('name-sheet').hidden = false;
+  });
+  $('name-chips').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) $('name-input').value = b.dataset.n; });
+  $('name-close').addEventListener('click', function () { $('name-sheet').hidden = true; });
+  $('name-ok').addEventListener('click', function () {
+    var wt = workTrack(); if (!wt) return;
+    var name = $('name-input').value.trim() || ('הקלטה ' + (S.mix.length + 1));
+    S.mix.push({ name: name, data: Float32Array.from(wt), sr: S.clips[0].sr, muted: false });
+    S.clips = []; S.take = null; invalidateWork(); invalidateMix();
+    $('save-btn').disabled = true;
+    $('name-sheet').hidden = true;
+    S.instrument = null; $('suggest-btn').hidden = true;
+    setStatus('״' + name + '״ נכנס למיקס. אפשר להקליט את הבא, והמיקס יתנגן ברקע.');
+    render();
+  });
+
+  // ---------- מה יש במיקס ----------
+  var confirmDel = -1;
+  function renderMixList() {
+    if (!S.mix.length) { $('mix-list').innerHTML = '<div class="mix-empty">עדיין אין כלום במיקס.</div>'; return; }
+    $('mix-list').innerHTML = S.mix.map(function (m, i) {
+      return '<div class="mix-row' + (m.muted ? ' muted' : '') + '">' +
+        '<span class="nm"><i class="dot" style="background:hsl(' + hueOf(i) + ' 62% 60%)"></i>' + m.name.replace(/</g, '&lt;') + '</span>' +
+        '<button class="btn" data-a="mute" data-i="' + i + '">' + (m.muted ? 'מושתק' : 'פעיל') + '</button>' +
+        '<button class="btn" data-a="edit" data-i="' + i + '">לעריכה</button>' +
+        '<button class="btn danger" data-a="del" data-i="' + i + '">' + (confirmDel === i ? 'בטוח?' : 'מחיקה') + '</button></div>';
+    }).join('');
+  }
+  $('mixlist-btn').addEventListener('click', function () { confirmDel = -1; renderMixList(); $('mix-sheet').hidden = false; });
+  $('mix-close').addEventListener('click', function () { $('mix-sheet').hidden = true; });
+  $('mix-sheet').addEventListener('click', function (e) { if (e.target.id === 'mix-sheet') $('mix-sheet').hidden = true; });
+  $('mix-list').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    var i = +b.dataset.i, m = S.mix[i];
+    if (S.mode !== 'idle') stop();
+    if (b.dataset.a === 'mute') { m.muted = !m.muted; invalidateMix(); confirmDel = -1; }
+    else if (b.dataset.a === 'del') {
+      if (confirmDel !== i) { confirmDel = i; renderMixList(); return; }
+      S.mix.splice(i, 1); invalidateMix(); confirmDel = -1;
+    } else if (b.dataset.a === 'edit') {
+      if (S.clips.length) { setStatus('בערוץ העבודה יש הקלטה. קודם להכניס אותה למיקס, ואז להחזיר את "' + m.name + '" לעריכה.'); $('mix-sheet').hidden = true; render(); return; }
+      var first = 0; while (first < m.data.length && Math.abs(m.data[first]) < 1e-6) first++;
+      var clip = { data: m.data, sr: m.sr, start: 0, latencyShift: 0, punch: first / m.sr, measured: null, useClean: false };
+      S.clips = [clip]; S.take = clip; invalidateWork();
+      S.mix.splice(i, 1); invalidateMix();
+      $('save-btn').disabled = false;
+      $('mix-sheet').hidden = true;
+      setStatus('״' + m.name + '״ חזר לערוץ העבודה.');
+    }
+    renderMixList(); render();
+  });
+
   function setStatus(t) { $('status').textContent = t; }
 
   function render() {
     var app = $('app');
+    document.documentElement.style.setProperty('--hue', hueOf(S.mix.length));
+    $('mixin-btn').disabled = !(S.clips.length && S.mode === 'idle');
+    $('mix-count').textContent = S.mix.length ? '(' + S.mix.length + ')' : '';
     app.classList.toggle('recording', S.mode === 'rec');
     app.classList.toggle('playing', S.mode === 'play');
     $('click-btn').setAttribute('aria-pressed', String(S.clickOn));

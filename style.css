@@ -145,3 +145,29 @@ input.vertical { writing-mode: vertical-lr; direction: rtl; flex: 1; width: 28px
 #inst-list { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .snd-ms { font-size: 11px; color: var(--acc); margin-top: 2px; }
 .snd-name em.lo { background: #F2C14E; }
+
+.faders { width: 210px; }
+.mix-btns { display: flex; flex-direction: column; gap: 6px; }
+.btn.mix-in { background: linear-gradient(135deg, hsl(var(--hue) 80% 72%), hsl(var(--hue) 62% 54%)); color: var(--bg); font-weight: 700; border-color: rgba(255,255,255,0.25); }
+.btn.mix-in:disabled { background: rgba(255,255,255,0.07); color: var(--muted); font-weight: 500; }
+.btn.mix-in.big { min-height: 48px; font-size: 15px; }
+input.mixv { accent-color: #C9CED6; }
+.sheet-box.narrow { width: min(440px, 100%); }
+.dot { display: inline-block; width: 12px; height: 12px; border-radius: 6px; vertical-align: middle; background: var(--acc); }
+.text-in { min-height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.25); color: var(--fg); font-family: inherit; font-size: 16px; padding: 0 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { min-height: 36px; padding: 0 12px; border-radius: 18px; border: 1px solid var(--line); background: rgba(255,255,255,0.07); color: var(--fg); font-family: inherit; font-size: 13px; }
+.mix-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.mix-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); }
+.mix-row.muted { opacity: 0.5; }
+.mix-row .nm { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mix-row .btn { min-height: 36px; font-size: 12px; }
+.mix-row .btn.danger { background: rgba(255,90,106,0.12); border-color: rgba(255,90,106,0.3); color: #FFC2C8; }
+.mix-empty { color: var(--muted); font-size: 14px; padding: 12px 4px; }
+.controls { gap: 6px; }
+.btn.rec { width: 62px; height: 62px; border-radius: 31px; }
+.rec-dot { width: 44px; height: 44px; border-radius: 22px; }
+.btn.play { width: 50px; height: 50px; border-radius: 16px; }
+.transport { padding: 0; }
+.mix-btns { gap: 6px; }
+#mixlist-btn { white-space: nowrap; font-size: 12px; padding: 0 6px; }

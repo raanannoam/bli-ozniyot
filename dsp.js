@@ -268,6 +268,69 @@
     return { clean: stage2(r.clean, r.est, Object.assign({}, lv, opts)), stage1: r.clean, est: r.est, ok: true };
   }
 
-  var api = { removeClicks: removeClicks, stage1: stage1, stage2: stage2, LEVELS: LEVELS, sincShift: sincShift, fft: fft };
+  // ---------- החסרת רקע ----------
+  // rec: ההקלטה. ref: מה שהרמקול ניגן, מיושר בערך להקלטה (אחרי תיקון ההשהיה).
+  // לומדים את "צביעת" הרמקול והחדר (תגובת הלם) מכל ההקלטה, ומחסירים את הרקע המשוער.
+  // הכלי שמנגנים לא קשור לרקע ברמת הדגימה, ולכן הממוצע על כל ההקלטה מבטל אותו.
+  function removeBackground(rec, ref, sr, opts) {
+    opts = opts || {};
+    var N = opts.n || 65536, HOP = N / 4, TAPS = opts.taps || 16384, PRE = opts.pre || 480;
+    var n = rec.length, i, k, f;
+    var refE = 0; for (i = 0; i < ref.length; i++) refE += ref[i] * ref[i];
+    if (refE < 1e-6) return { clean: Float32Array.from(rec), est: new Float32Array(n), ok: false };
+    // ref מוקדם ב־PRE דגימות, כך שתגובת ההלם תתחיל קצת אחרי אפס (מכסה גם טעות קטנה בהשהיה)
+    function r(j) { j += PRE; return (j >= 0 && j < ref.length) ? ref[j] : 0; }
+    var win = new Float64Array(N);
+    for (i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    var Sxyr = new Float64Array(N), Sxyi = new Float64Array(N), Sxx = new Float64Array(N);
+    for (var s0 = 0; s0 + N <= n; s0 += HOP) {
+      var xr = new Float64Array(N), xi = new Float64Array(N), yr = new Float64Array(N), yi = new Float64Array(N), ex = 0;
+      for (i = 0; i < N; i++) { xr[i] = r(s0 + i) * win[i]; yr[i] = rec[s0 + i] * win[i]; ex += xr[i] * xr[i]; }
+      if (ex < 1e-9) continue;
+      fft(xr, xi); fft(yr, yi);
+      for (k = 0; k < N; k++) {
+        Sxyr[k] += xr[k] * yr[k] + xi[k] * yi[k];   // conj(X) * Y
+        Sxyi[k] += xr[k] * yi[k] - xi[k] * yr[k];
+        Sxx[k] += xr[k] * xr[k] + xi[k] * xi[k];
+      }
+    }
+    var maxS = 0; for (k = 0; k < N; k++) if (Sxx[k] > maxS) maxS = Sxx[k];
+    var hr = new Float64Array(N), hi = new Float64Array(N), reg = maxS * 1e-4;
+    for (k = 0; k < N; k++) { var d = Sxx[k] + reg; hr[k] = Sxyr[k] / d; hi[k] = Sxyi[k] / d; }
+    ifft(hr, hi);
+    // תגובת ההלם: TAPS הראשונים, עם דעיכה רכה בסוף
+    var h = new Float64Array(TAPS);
+    for (i = 0; i < TAPS; i++) { var w = i < TAPS - 256 ? 1 : 0.5 + 0.5 * Math.cos(Math.PI * (i - TAPS + 256) / 256); h[i] = hr[i] * w; }
+    // הרקע המשוער = ref מסונן בתגובת ההלם (קונבולוציה מהירה בבלוקים)
+    var B = 16384, M = 32768, Hr = new Float64Array(M), Hi = new Float64Array(M);  // M >= B + TAPS
+    for (i = 0; i < TAPS; i++) Hr[i] = h[i];
+    fft(Hr, Hi);
+    var est = new Float32Array(n);
+    for (var b0 = 0; b0 < n; b0 += B) {
+      var ar = new Float64Array(M), ai = new Float64Array(M), any = false;
+      for (i = 0; i < B; i++) { var v = r(b0 + i); ar[i] = v; if (v !== 0) any = true; }
+      if (!any) continue;
+      fft(ar, ai);
+      for (k = 0; k < M; k++) { var pr = ar[k] * Hr[k] - ai[k] * Hi[k], pi = ar[k] * Hi[k] + ai[k] * Hr[k]; ar[k] = pr; ai[k] = pi; }
+      ifft(ar, ai);
+      for (i = 0; i < M && b0 + i < n; i++) est[b0 + i] += ar[i];
+    }
+    var clean = new Float32Array(n);
+    for (i = 0; i < n; i++) clean[i] = rec[i] - est[i];
+    return { clean: clean, est: est, ok: true, ir: h };
+  }
+
+  // הכול יחד: רקע, ואז קליק (שלב 1), ואז הנמכת השארית של שניהם (שלב 2)
+  function removeAll(data, sr, clicks, ref, opts) {
+    opts = opts || {};
+    var bg = ref ? removeBackground(data, ref, sr, opts) : { clean: data, est: new Float32Array(data.length), ok: false };
+    var r = stage1(bg.clean, sr, clicks, opts);
+    // שלב 2 מקבל רק את הקליק: על הרקע הוא פגע בנגינה יותר משעזר (נבדק בסימולציה)
+    var est = r.ok ? r.est : new Float32Array(data.length);
+    var lv = LEVELS[opts.level || 'strong'];
+    return { clean: stage2(r.ok ? r.clean : bg.clean, est, Object.assign({}, lv, opts)), stage1: r.ok ? r.clean : bg.clean, est: est, ok: r.ok || bg.ok, bgOk: bg.ok };
+  }
+
+  var api = { removeClicks: removeClicks, removeBackground: removeBackground, removeAll: removeAll, stage1: stage1, stage2: stage2, LEVELS: LEVELS, sincShift: sincShift, fft: fft };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ClickDSP = api;
 })(this);
