@@ -202,34 +202,54 @@
     chunks.forEach(function (c) { data.set(c.d, at); at += c.d.length; });
     var start = chunks[0].t - songT0;    // זמן השיר של הדגימה הראשונה, כפי שהמחשב רשם אותה
     var take = { data: data, sr: ctx.sampleRate, start: start, punch: cursorSec(), preFrom: recFrom, latencyShift: 0, measured: null };
-    var lat = measureLatency(take);
-    if (lat !== null) { take.measured = lat; take.latencyShift = -lat; }
+    var lat = measureLatency(take), prev = lastLatency();
+    if (lat !== null) { take.measured = lat; take.latencyShift = -lat; rememberLatency(lat); }
+    else if (prev !== null) { take.measured = prev; take.latencyShift = -prev; }
     S.take = take;
     chunks = [];
     $('save-btn').disabled = false;
-    if (lat !== null) setStatus('ההקלטה נשמרה. ההשהיה נמדדה מהקליק הראשון ותוקנה.');
-    else setStatus('ההקלטה נשמרה, אבל לא שמעתי את הקליק בהקדמה, אז ההשהיה לא תוקנה. כדאי להגביר את הקליק.');
+    if (lat !== null) setStatus('ההקלטה נשמרה. ההשהיה נמדדה מקליקי ההקדמה ותוקנה.');
+    else if (prev !== null) setStatus('ההקלטה נשמרה. לא הצלחתי למדוד הפעם, אז השתמשתי בהשהיה מהמדידה הקודמת.');
+    else setStatus('ההקלטה נשמרה, אבל לא שמעתי את הקליק בהקדמה, אז ההשהיה לא תוקנה. נסו להקדמה של 2 תיבות, או להגביר.');
   }
 
-  // מוצא את הקליק הראשון של ההקדמה בתוך ההקלטה, ומודד כמה זמן לקח לו להגיע מהרמקול למיקרופון
+  // מודד כמה זמן לוקח לקליק להגיע מהרמקול למיקרופון.
+  // ממצע את כל קליקי ההקדמה יחד, כך שגם קליק חלש בולט מעל הרעש.
   function measureLatency(tk) {
-    var bd = beatDur();
-    var firstBeat = Math.ceil(tk.preFrom / bd - 1e-6) * bd;
-    var win0 = Math.round((firstBeat - tk.start) * tk.sr);
-    var win1 = win0 + Math.round(Math.min(0.5, bd * 0.9) * tk.sr);
-    if (win0 < 0 || win1 > tk.data.length) return null;
-    // רעש הרקע: מה שהיה לפני הקליק
-    var noise = 0;
-    for (var i = Math.max(0, win0 - 2400); i < win0; i++) noise = Math.max(noise, Math.abs(tk.data[i]));
-    var max = 0;
-    for (i = win0; i < win1; i++) max = Math.max(max, Math.abs(tk.data[i]));
-    if (max < 0.01 || max < noise * 3) return null;
-    var th = Math.max(noise * 2, max * 0.3);
-    for (i = win0; i < win1; i++) {
-      if (Math.abs(tk.data[i]) >= th) return (i - win0) / tk.sr;
+    var bd = beatDur(), sr = tk.sr;
+    var STEP = Math.round(sr / 2000);            // רזולוציה של חצי אלפית שנייה
+    var maxLag = Math.min(1.0, bd * 0.95);
+    var nLag = Math.floor(maxLag * 2000);
+    // מעטפת: האנרגיה הממוצעת בכל חצי אלפית שנייה
+    var nEnv = Math.floor(tk.data.length / STEP), env = new Float32Array(nEnv);
+    for (var j = 0; j < nEnv; j++) {
+      var m = 0;
+      for (var i = j * STEP, e = i + STEP; i < e; i++) m += tk.data[i] * tk.data[i];
+      env[j] = m / STEP;
     }
-    return null;
+    // פרופיל ממוצע: מה המיקרופון שמע בכל השהיה אפשרית אחרי כל קליק בהקדמה
+    var profile = new Float32Array(nLag), used = 0;
+    for (var b = Math.ceil(tk.preFrom / bd - 1e-6); b * bd < tk.punch - 1e-6; b++) {
+      var j0 = Math.round((b * bd - tk.start) * 2000);
+      if (j0 < 0 || j0 + nLag >= nEnv) continue;
+      for (var L = 0; L < nLag; L++) profile[L] += env[j0 + L];
+      used++;
+    }
+    if (!used) return null;
+    var peak = 0, peakAt = 0;
+    for (L = 0; L < nLag; L++) { profile[L] /= used; if (profile[L] > peak) { peak = profile[L]; peakAt = L; } }
+    var sorted = Array.prototype.slice.call(profile).sort(function (x, y) { return x - y; });
+    var median = sorted[Math.floor(sorted.length / 2)] || 1e-9;
+    if (peak < median * 3) return null;          // לא ברור מספיק
+    // תחילת הקליק: הנקודה האחרונה לפני השיא שבה הוא עוד היה מתחת ל־30% (מעל הרעש)
+    var th = median + (peak - median) * 0.3;
+    var onset = peakAt;
+    while (onset > 0 && profile[onset - 1] >= th) onset--;
+    return onset / 2000;
   }
+
+  function lastLatency() { try { var v = parseFloat(localStorage.getItem('bli-latency')); return isNaN(v) ? null : v; } catch (e) { return null; } }
+  function rememberLatency(v) { try { localStorage.setItem('bli-latency', String(v)); } catch (e) {} }
 
   // ---------- שמירה כקובץ ----------
   function wavFloat32(data, sr) {
