@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0C0E12">
+<title>בלי אוזניות</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- לוח בקרה – ימין -->
+  <aside class="panel controls">
+    <div class="glass tempo">
+      <span class="cap">קצב · גררו לצדדים</span>
+      <div class="drum" id="drum" dir="ltr" role="slider" tabindex="0" aria-label="קצב" aria-valuemin="40" aria-valuemax="240" aria-valuenow="92"></div>
+    </div>
+
+    <div class="row">
+      <button class="btn" id="click-btn" aria-pressed="true">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 21h8l-3-17h-2z"/><path d="M12 15l6-8"/></svg>
+        קליק
+      </button>
+      <button class="btn num small" id="meter-btn" aria-label="משקל">4/4</button>
+      <button class="btn stack small" id="pre-btn" aria-label="תיבות הקדמה"><b class="num" id="pre-val">1</b><span>הקדמה</span></button>
+    </div>
+
+    <button class="btn sound-btn" id="sound-btn">סאונד: <b id="sound-name">בלוק עץ</b></button>
+
+    <div class="transport">
+      <button class="btn rec" id="rec-btn" aria-label="הקלטה"><span class="rec-dot"></span></button>
+      <button class="btn play" id="play-btn" aria-label="ניגון">
+        <svg class="i-play" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.9l10.5-6.5a1 1 0 0 0 0-1.8L9.5 4.6A1 1 0 0 0 8 5.5z"/></svg>
+        <svg class="i-pause" aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg>
+      </button>
+    </div>
+
+    <div class="row">
+      <button class="btn grow" id="to-cursor">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 5v14" class="red"/><path d="M14 12H4M8 8l-4 4 4 4"/></svg>
+        להקלטה
+      </button>
+      <button class="btn small" id="to-start" aria-label="חזרה לתחילת השיר">
+        <svg aria-hidden="true" viewBox="0 0 24 24" class="fill"><rect x="4" y="5" width="2.5" height="14" rx="1"/><path d="M13 6v12l-6-6z"/><path d="M20 6v12l-6-6z"/></svg>
+      </button>
+    </div>
+
+    <div class="spacer"></div>
+    <button class="btn" id="save-btn" disabled>
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
+      שמירת ההקלטה כקובץ
+    </button>
+  </aside>
+
+  <!-- מרכז -->
+  <main class="center">
+    <div class="status-row">
+      <span class="status" id="status">נגיעה בציר הזמן קובעת מאיפה מקליטים</span>
+      <span class="latency num" id="latency"></span>
+    </div>
+    <div class="glass timeline-wrap" id="timeline-wrap" dir="ltr">
+      <canvas id="timeline"></canvas>
+    </div>
+  </main>
+
+  <!-- עוצמות – שמאל -->
+  <aside class="panel faders">
+    <div class="glass fader">
+      <label for="take-vol">הקלטה</label>
+      <input type="range" id="take-vol" min="0" max="100" value="90" class="vertical">
+    </div>
+    <div class="glass fader">
+      <label for="click-vol">קליק</label>
+      <input type="range" id="click-vol" min="0" max="100" value="80" class="vertical">
+    </div>
+    <div class="glass fader meter-box">
+      <span class="cap">כניסה</span>
+      <div class="meter" aria-hidden="true"><div class="meter-fill" id="meter-fill"></div></div>
+      <span class="clip" id="clip">חזק!</span>
+    </div>
+  </aside>
+</div>
+
+<div class="rotate">
+  <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M20 12a8 8 0 0 1-3 6"/><path d="M17 15v3h3"/></svg>
+  <p>סובבו את הטלפון לרוחב</p>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
