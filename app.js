@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '8';
+  var CODE_VERSION = '9';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -14,25 +14,26 @@
   }
 
   // ---------- נתונים קבועים ----------
-  // ease: כמה קל להסיר את הסאונד מההקלטה (1-4), לפי אורך הזנב שנמדד. high: צליל גבוה, מתאים להקלטת בס
+  // ms: אורך הצליל עד שהוא דועך (נמדד). קצר יותר = קל יותר להסיר.
+  // high: צליל גבוה, מתאים לכלים נמוכים (בס). low: צליל עמוק, מתאים לכלים גבוהים.
   var SOUNDS = {
-    clap:      { name: 'מחיאת כף',   desc: 'הכי קצר, יבש',        file: 'clap',      ease: 4, high: true,  rate: { base: 1.0, mid: 1.08, top: 1.16 } },
-    woodtight: { name: 'עץ קצר',     desc: 'בלוק עץ, זנב מקוצר',  file: 'woodtight', ease: 4, high: false, rate: { base: 1.0, mid: 1.12, top: 1.26 } },
-    cajon:     { name: 'קחון',       desc: 'מכה קצרה ויבשה',      file: 'cajon',     ease: 4, high: false, rate: { base: 1.0, mid: 1.1, top: 1.2 } },
-    cabasa:    { name: 'קבסה',       desc: 'רחש קצר וגבוה',       file: 'cabasa',    ease: 3, high: true,  rate: { base: 1.0, mid: 1.06, top: 1.12 } },
-    bongo:     { name: 'בונגו מושתק', desc: 'חם ורך',             file: 'bongo',     ease: 3, high: false, rate: { base: 1.0, mid: 1.12, top: 1.26 } },
-    wood:      { name: 'בלוק עץ',    desc: 'קלאסי',               file: 'wood',      ease: 2, high: false, rate: { base: 1.0, mid: 1.12, top: 1.26 } },
-    claves:    { name: 'קלאבס',      desc: 'חד וברור',            file: 'claves',    ease: 2, high: true,  rate: { base: 1.0, mid: 1.12, top: 1.26 } },
-    lowwood:   { name: 'עץ נמוך',    desc: 'עמוק ורך',            file: 'wood2',     ease: 2, high: false, rate: { base: 0.6, mid: 0.67, top: 0.75 } },
-    shaker:    { name: 'שייקר',      desc: 'רך ומוזיקלי',         file: 'shaker',    ease: 1, high: true,  rate: { base: 1.0, mid: 1.06, top: 1.12 } }
+    clap:      { name: 'מחיאת כף',    desc: 'יבש',               file: 'clap',      ms: 50,  high: true,  rate: { base: 1.0, mid: 1.08, top: 1.16 } },
+    woodtight: { name: 'עץ קצר',      desc: 'בלוק עץ, זנב מקוצר', file: 'woodtight', ms: 55,  rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    cabasa:    { name: 'קבסה',        desc: 'רחש גבוה',          file: 'cabasa',    ms: 80,  high: true,  rate: { base: 1.0, mid: 1.06, top: 1.12 } },
+    cajon:     { name: 'קחון',        desc: 'מכה יבשה',          file: 'cajon',     ms: 90,  rate: { base: 1.0, mid: 1.1, top: 1.2 } },
+    bongo:     { name: 'בונגו מושתק',  desc: 'חם ורך',            file: 'bongo',     ms: 90,  low: true,   rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    claves:    { name: 'קלאבס',       desc: 'חד וברור',          file: 'claves',    ms: 185, high: true,  rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    wood:      { name: 'בלוק עץ',     desc: 'קלאסי',             file: 'wood',      ms: 190, rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    shaker:    { name: 'שייקר',       desc: 'רך ומוזיקלי',       file: 'shaker',    ms: 220, high: true,  rate: { base: 1.0, mid: 1.06, top: 1.12 } },
+    lowwood:   { name: 'עץ נמוך',     desc: 'עמוק ורך',          file: 'wood2',     ms: 300, low: true,   rate: { base: 0.6, mid: 0.67, top: 0.75 } }
   };
+  var SOUND_ORDER = ['clap', 'woodtight', 'cabasa', 'cajon', 'bongo', 'claves', 'wood', 'shaker', 'lowwood'];
   // כלים: prefer = איזה קליק עדיף. high = צליל גבוה (רחוק מהבס), low = צליל עמוק יותר (רחוק מכלים גבוהים)
   var INSTRUMENTS = [
     { k: 'guitar', name: 'גיטרה' }, { k: 'bass', name: 'בס', prefer: 'high' }, { k: 'voice', name: 'קול' },
     { k: 'drums', name: 'תופים' }, { k: 'perc', name: 'כלי הקשה', prefer: 'low' }, { k: 'keys', name: 'מקלדים' },
     { k: 'violin', name: 'כינור', prefer: 'low' }, { k: 'other', name: 'אחר' }
   ];
-  var SOUND_ORDER = ['clap', 'woodtight', 'cajon', 'cabasa', 'bongo', 'wood', 'claves', 'lowwood', 'shaker'];
   var LEVEL_GAIN = { base: 0.7, mid: 0.85, top: 1.0 };
   var METERS = ['2/4', '3/4', '4/4', '5/4', '7/4', '5/8', '6/8', '7/8', '9/8', '10/8', '12/8'];
   var GROUPS = { '5/8': [3, 2], '6/8': [3, 3], '7/8': [2, 2, 3], '9/8': [3, 2, 2, 2], '10/8': [3, 3, 2, 2], '12/8': [3, 3, 3, 3] };
@@ -41,7 +42,7 @@
 
   // ---------- מצב ----------
   var S = {
-    bpm: 92, meter: '4/4', pre: 1, clickOn: true, instrument: null,
+    bpm: 92, meter: '4/4', pre: 1, clickOn: true, instrument: null, clips: [],
     sound: (function () { try { var v = localStorage.getItem('bli-sound'); return v || 'woodtight'; } catch (e) { return 'woodtight'; } })(),
     clickVol: Math.pow(10, -10 * 0.5 / 20), takeVol: Math.pow(10, -10 * 0.5 / 20),
     mode: 'idle',          // idle | play | rec
@@ -166,22 +167,43 @@
   }
 
   function takeData(tk) { return tk.useClean && tk.clean ? tk.clean : tk.data; }
+  function clipStart(tk) { return tk.start + tk.latencyShift; }            // זמן השיר של הדגימה הראשונה
+  function clipEnd(tk) { return clipStart(tk) + tk.data.length / tk.sr; }
+
+  // ערוץ העבודה: כל ההקלטות מודבקות על ציר אחד. הקלטה חדשה מכסה את מה שמתחתיה (העליון מנצח),
+  // עם מעבר רך של 5 אלפיות שנייה בקצוות. הישנות לא נמחקות.
+  var workCache = null;
+  function invalidateWork() { workCache = null; }
+  function workTrack() {
+    if (workCache) return workCache;
+    if (!S.clips.length) return null;
+    var sr = S.clips[0].sr, end = 0;
+    S.clips.forEach(function (c) { end = Math.max(end, clipEnd(c)); });
+    var out = new Float32Array(Math.ceil(end * sr) + 1), fade = Math.round(0.005 * sr);
+    S.clips.forEach(function (c) {
+      var src = takeData(c), st = clipStart(c);
+      var a = Math.max(0, Math.round(c.punch * sr)), b = Math.min(out.length, Math.floor(clipEnd(c) * sr));
+      for (var i = a; i < b; i++) {
+        var j = Math.round(i - st * sr);
+        var v = (j >= 0 && j < src.length) ? src[j] : 0;
+        var w = Math.min(1, (i - a) / fade, (b - 1 - i) / fade);
+        out[i] = w >= 1 ? v : out[i] * (1 - w) + v * w;
+      }
+    });
+    return (workCache = out);
+  }
 
   function playTake(fromSec) {
-    var tk = S.take;
-    if (!tk) return;
-    var playStart = tk.start + tk.latencyShift; // זמן השיר של הדגימה הראשונה, אחרי תיקון השהיה
-    var punchOffset = (tk.punch - playStart);   // מנגנים רק מנקודת ההתחלה, בלי ההקדמה
-    var begin = Math.max(fromSec, tk.punch);
-    var offset = punchOffset + (begin - tk.punch);
-    var dur = tk.data.length / tk.sr;
-    if (offset >= dur) return;
-    var buf = ctx.createBuffer(1, tk.data.length, tk.sr);
-    buf.copyToChannel(takeData(tk), 0);
+    var wt = workTrack();
+    if (!wt) return;
+    var sr = S.clips[0].sr, begin = Math.max(0, fromSec);
+    if (begin * sr >= wt.length) return;
+    var buf = ctx.createBuffer(1, wt.length, sr);
+    buf.copyToChannel(wt, 0);
     takeSrc = ctx.createBufferSource();
     takeSrc.buffer = buf;
     takeSrc.connect(takeBus);
-    takeSrc.start(songT0 + begin, offset);
+    takeSrc.start(songT0 + begin, begin);
   }
 
   async function play() {
@@ -237,6 +259,8 @@
     if (lat !== null) { take.measured = lat; take.latencyShift = -lat; rememberLatency(lat); }
     else if (prev !== null) { take.measured = prev; take.latencyShift = -prev; }
     S.take = take;
+    S.clips.push(take);
+    invalidateWork();
     chunks = [];
     $('save-btn').disabled = false;
     var clicksUsed = recClicks.slice(); recClicks = [];
@@ -258,6 +282,7 @@
         tk.clean = S.level === 'orig' ? window.ClickDSP.stage2(r.stage1, r.est, window.ClickDSP.LEVELS.strong) : r.clean;
         tk.cleanLevel = S.level === 'orig' ? 'strong' : S.level;
         tk.useClean = S.level !== 'orig';
+        invalidateWork();
         setStatus('הקליק הוסר. למעלה אפשר לבחור כמה חזק להסיר, או לשמוע את המקור.');
       } else setStatus('לא הצלחתי ללמוד את הקליק מההקדמה, אז הוא נשאר בהקלטה.');
     } catch (e) {
@@ -322,7 +347,7 @@
     var name = 'bli-ozniyot-' + S.bpm + 'bpm-' + S.meter.replace('/', '-') + '-' +
       d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' +
       String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0') + '.wav';
-    var blob = wavFloat32(takeData(S.take), S.take.sr); // נשמר מה שנשמע: נקי או מקור. כולל את ההקדמה
+    var blob = wavFloat32(workTrack(), S.take.sr); // נשמר מה שנשמע: ערוץ העבודה מתחילת השיר, נקי או מקור
     var file = new File([blob], name, { type: 'audio/wav' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
@@ -345,7 +370,7 @@
 
   function songBars() {
     var end = cursorSec() + barDur() * 2;
-    if (S.take) end = Math.max(end, S.take.start + S.take.latencyShift + S.take.data.length / S.take.sr);
+    S.clips.forEach(function (c) { end = Math.max(end, clipEnd(c)); });
     if (S.mode !== 'idle') end = Math.max(end, songNow() + barDur());
     return Math.max(8, Math.ceil(end / barDur()) + 1);
   }
@@ -387,21 +412,26 @@
     // ההקלטה
     var acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim() || '#6fe0a8';
     var trackTop = top + 8, trackH = h - top - 16;
-    if (S.take && S.mode !== 'rec') {
-      var tk = S.take, st = tk.start + tk.latencyShift, td = takeData(tk);
-      var x0 = xOf(tk.punch), x1 = xOf(st + tk.data.length / tk.sr);
-      if (x1 > x0) {
-        g2.fillStyle = 'hsla(150,60%,45%,0.18)';
+    var wt = workTrack();
+    if (wt) {
+      var wsr = S.clips[0].sr, mid = trackTop + trackH / 2, spp = wsr * barDur() / layout.pxPerBar;
+      // מסגרת לכל הקלטה; הישנות קודם, כך שהחדשה מעליהן
+      S.clips.forEach(function (c, ci) {
+        var x0 = xOf(c.punch), x1 = xOf(clipEnd(c));
+        if (x1 <= x0) return;
+        var newest = ci === S.clips.length - 1;
+        g2.fillStyle = newest ? 'hsla(150,60%,45%,0.18)' : 'hsla(150,40%,40%,0.12)';
         roundRect(x0 + 1, trackTop, x1 - x0 - 2, trackH, 10); g2.fill();
-        g2.strokeStyle = acc; g2.lineWidth = 1.5; g2.stroke();
-        g2.fillStyle = acc;
-        var mid = trackTop + trackH / 2, spp = tk.sr * barDur() / layout.pxPerBar;
-        for (var px = Math.ceil(x0) + 3; px < x1 - 3; px += 2) {
-          var i0 = Math.floor((px / layout.pxPerBar * barDur() - st) * tk.sr), i1 = i0 + Math.ceil(spp * 2), pk = 0;
-          for (var i = Math.max(0, i0); i < Math.min(td.length, i1); i++) { var a = Math.abs(td[i]); if (a > pk) pk = a; }
-          var hh = Math.max(1, Math.min(1, pk * 1.4) * (trackH / 2 - 6));
-          g2.fillRect(px, mid - hh, 1.5, hh * 2);
-        }
+        g2.strokeStyle = newest ? acc : 'rgba(150,200,175,0.45)'; g2.lineWidth = 1.5; g2.stroke();
+      });
+      g2.fillStyle = acc;
+      var lo = Infinity; S.clips.forEach(function (c) { lo = Math.min(lo, c.punch); });
+      for (var px = Math.ceil(xOf(lo)) + 3; px < xOf(wt.length / wsr) - 3; px += 2) {
+        var i0 = Math.floor(px / layout.pxPerBar * barDur() * wsr), i1 = i0 + Math.ceil(spp * 2), pk = 0;
+        for (var i = Math.max(0, i0); i < Math.min(wt.length, i1); i++) { var a = Math.abs(wt[i]); if (a > pk) pk = a; }
+        if (pk < 1e-5) continue;
+        var hh = Math.max(1, Math.min(1, pk * 1.4) * (trackH / 2 - 6));
+        g2.fillRect(px, mid - hh, 1.5, hh * 2);
       }
     }
     // הקלטה חיה: אזור אדום שגדל, עם הגל כפי שהוא נכנס
@@ -508,7 +538,7 @@
   function suggestFor(inst) {
     var cur = SOUNDS[S.sound];
     if (inst.prefer === 'high' && !cur.high) return { k: 'clap', why: 'לבס עדיף קליק גבוה, כדי שההסרה לא תפגע בבס.' };
-    if (inst.prefer === 'low' && cur.high) return { k: 'woodtight', why: 'ל' + inst.name + ' עדיף קליק עמוק יותר, רחוק מהצליל של הכלי.' };
+    if (inst.prefer === 'low' && cur.high) return { k: 'bongo', why: 'ל' + inst.name + ' עדיף קליק עמוק יותר, רחוק מהצליל של הכלי.' };
     return null;
   }
   function showSuggestion() {
@@ -545,12 +575,12 @@
   function renderSoundList() {
     var html = '';
     SOUND_ORDER.forEach(function (k) {
-      var s = SOUNDS[k], dots = '';
-      for (var i = 1; i <= 4; i++) dots += '<i class="' + (i <= s.ease ? 'on' : '') + '"></i>';
+      var s = SOUNDS[k];
+      var tag = s.high ? ' <em>לכלים נמוכים</em>' : (s.low ? ' <em class="lo">לכלים גבוהים</em>' : '');
       html += '<button class="snd" data-k="' + k + '" aria-pressed="' + (k === S.sound) + '">' +
-        '<span class="snd-name">' + s.name + (s.high ? ' <em>טוב לבס</em>' : '') + '</span>' +
+        '<span class="snd-name">' + s.name + tag + '</span>' +
         '<span class="snd-desc">' + s.desc + '</span>' +
-        '<span class="ease" aria-label="קלות הסרה ' + s.ease + ' מתוך 4">' + dots + '</span></button>';
+        '<span class="snd-ms num">' + s.ms + ' אלפיות שנייה</span></button>';
     });
     $('sound-list').innerHTML = html;
   }
@@ -571,18 +601,20 @@
   $('save-btn').addEventListener('click', saveTake);
   document.querySelectorAll('.lv').forEach(function (b) {
     b.addEventListener('click', function () {
-      var tk = S.take;
-      if (!tk || !tk.s1) return;
+      if (!S.take || !S.take.s1) return;
       var lv = b.dataset.level;
       var was = S.mode === 'play', pos = songNow();
       if (was) stop();
       S.level = lv;
       try { localStorage.setItem('bli-level2', lv); } catch (e) {}
-      if (lv === 'orig') tk.useClean = false;
-      else {
+      // הרמה חלה על כל ההקלטות בערוץ
+      S.clips.forEach(function (tk) {
+        if (!tk.s1) return;
+        if (lv === 'orig') { tk.useClean = false; return; }
         if (tk.cleanLevel !== lv) { tk.clean = window.ClickDSP.stage2(tk.s1, tk.est, window.ClickDSP.LEVELS[lv]); tk.cleanLevel = lv; }
         tk.useClean = true;
-      }
+      });
+      invalidateWork();
       if (was) { S.stoppedAt = Math.max(0, pos); play(); } else render();
     });
   });
