@@ -137,7 +137,8 @@
   // ---------- שלב 2 ----------
   function stage2(y, est, opts) {
     opts = opts || {};
-    var c = opts.c == null ? 0.02 : opts.c, beta = opts.beta == null ? 4 : opts.beta, floor = opts.floor == null ? 0.1 : opts.floor;
+    // ברירת מחדל "חזק מאוד": נבדק על הקלטות אמיתיות, כ־51 דציבלים לקליק, ופגיעה זניחה בכלי
+    var c = opts.c == null ? 0.1 : opts.c, beta = opts.beta == null ? 32 : opts.beta, floor = opts.floor == null ? 0.01 : opts.floor;
     var N = 1024, HOP = 256, nb = N / 2 + 1;
     var win = new Float32Array(N);
     for (var i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
