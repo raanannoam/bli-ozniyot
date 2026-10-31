@@ -181,6 +181,27 @@
       }
       G.push(g);
     }
+    // ריפוי: לכל רצף של מסגרות קליק, הספקטרום רגע לפני ורגע אחרי. ממלאים את החורים בעוצמה שביניהם
+    var heal = opts.heal || 0, runA = new Int32Array(nF), runB = new Int32Array(nF), edge = {};
+    function magAt(fr) {
+      if (fr < 0 || fr >= nF) return null;
+      if (edge[fr]) return edge[fr];
+      var xr = new Float64Array(N), xi = new Float64Array(N), st = fr * HOP - off;
+      for (var q = 0; q < N; q++) { var jj = st + q; if (jj >= 0 && jj < y.length) xr[q] = y[jj] * win[q]; }
+      fft(xr, xi);
+      var m = new Float64Array(nb);
+      for (var kq = 0; kq < nb; kq++) m[kq] = Math.sqrt(xr[kq] * xr[kq] + xi[kq] * xi[kq]) + 1e-9;
+      return (edge[fr] = m);
+    }
+    if (heal > 0) {
+      for (f = 0; f < nF; f++) {
+        if (!act[f]) continue;
+        var a0 = f; while (a0 > 0 && act[a0 - 1]) a0--;
+        var b0 = f; while (b0 < nF - 1 && act[b0 + 1]) b0++;
+        for (var q = a0; q <= b0; q++) { runA[q] = a0 - 1; runB[q] = b0 + 1; }
+        f = b0;
+      }
+    }
     // החלקה של הרווחים: 5 מסגרות בזמן × 3 בתדר, כדי שהשינוי יהיה רך ולא "קופצני"
     var out = Float32Array.from(y), acc = new Float64Array(y.length + N), wsum = new Float64Array(y.length + N);
     for (f = 0; f < nF; f++) {
@@ -198,6 +219,20 @@
         gs[k] = sum / cnt;
       }
       var re = Yr[f], im = Yi[f];
+      if (heal > 0) {
+        var mb = magAt(runA[f]), ma = magAt(runB[f]);
+        if (mb || ma) {
+          mb = mb || ma; ma = ma || mb;
+          var w = (f - runA[f]) / Math.max(1, runB[f] - runA[f]);
+          for (k = 0; k < nb; k++) {
+            if (gs[k] >= 1) continue;
+            var ref = Math.exp((1 - w) * Math.log(mb[k]) + w * Math.log(ma[k])) * heal;
+            var cur = Math.sqrt(re[k] * re[k] + im[k] * im[k]) + 1e-12;
+            var gh = ref / cur;
+            if (gh > gs[k]) gs[k] = gh > 1 ? 1 : gh;
+          }
+        }
+      }
       for (k = 0; k < nb; k++) { re[k] *= gs[k]; im[k] *= gs[k]; if (k > 0 && k < N / 2) { re[N - k] *= gs[k]; im[N - k] *= gs[k]; } }
       ifft(re, im);
       s = f * HOP - off;
