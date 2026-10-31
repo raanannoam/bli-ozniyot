@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '6';
+  var CODE_VERSION = '7';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -14,13 +14,19 @@
   }
 
   // ---------- נתונים קבועים ----------
+  // ease: כמה קל להסיר את הסאונד מההקלטה (1-4), לפי אורך הזנב שנמדד. high: צליל גבוה, מתאים להקלטת בס
   var SOUNDS = {
-    wood:    { name: 'בלוק עץ', file: 'wood',   rate: { base: 1.0, mid: 1.12, top: 1.26 } },
-    lowwood: { name: 'עץ נמוך', file: 'wood2',  rate: { base: 0.6, mid: 0.67, top: 0.75 } },
-    shaker:  { name: 'שייקר',   file: 'shaker', rate: { base: 1.0, mid: 1.06, top: 1.12 } },
-    claves:  { name: 'קלאבס',   file: 'claves', rate: { base: 1.0, mid: 1.12, top: 1.26 } }
+    clap:      { name: 'מחיאת כף',   desc: 'הכי קצר, יבש',        file: 'clap',      ease: 4, high: true,  rate: { base: 1.0, mid: 1.08, top: 1.16 } },
+    woodtight: { name: 'עץ קצר',     desc: 'בלוק עץ, זנב מקוצר',  file: 'woodtight', ease: 4, high: false, rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    cajon:     { name: 'קחון',       desc: 'מכה קצרה ויבשה',      file: 'cajon',     ease: 4, high: false, rate: { base: 1.0, mid: 1.1, top: 1.2 } },
+    cabasa:    { name: 'קבסה',       desc: 'רחש קצר וגבוה',       file: 'cabasa',    ease: 3, high: true,  rate: { base: 1.0, mid: 1.06, top: 1.12 } },
+    bongo:     { name: 'בונגו מושתק', desc: 'חם ורך',             file: 'bongo',     ease: 3, high: false, rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    wood:      { name: 'בלוק עץ',    desc: 'קלאסי',               file: 'wood',      ease: 2, high: false, rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    claves:    { name: 'קלאבס',      desc: 'חד וברור',            file: 'claves',    ease: 2, high: true,  rate: { base: 1.0, mid: 1.12, top: 1.26 } },
+    lowwood:   { name: 'עץ נמוך',    desc: 'עמוק ורך',            file: 'wood2',     ease: 2, high: false, rate: { base: 0.6, mid: 0.67, top: 0.75 } },
+    shaker:    { name: 'שייקר',      desc: 'רך ומוזיקלי',         file: 'shaker',    ease: 1, high: true,  rate: { base: 1.0, mid: 1.06, top: 1.12 } }
   };
-  var SOUND_ORDER = ['wood', 'lowwood', 'shaker', 'claves'];
+  var SOUND_ORDER = ['clap', 'woodtight', 'cajon', 'cabasa', 'bongo', 'wood', 'claves', 'lowwood', 'shaker'];
   var LEVEL_GAIN = { base: 0.7, mid: 0.85, top: 1.0 };
   var METERS = ['2/4', '3/4', '4/4', '5/4', '7/4', '5/8', '6/8', '7/8', '9/8', '10/8', '12/8'];
   var GROUPS = { '5/8': [3, 2], '6/8': [3, 3], '7/8': [2, 2, 3], '9/8': [3, 2, 2, 2], '10/8': [3, 3, 2, 2], '12/8': [3, 3, 3, 3] };
@@ -29,7 +35,8 @@
 
   // ---------- מצב ----------
   var S = {
-    bpm: 92, meter: '4/4', pre: 1, sound: 'wood', clickOn: true,
+    bpm: 92, meter: '4/4', pre: 1, clickOn: true,
+    sound: (function () { try { var v = localStorage.getItem('bli-sound'); return v || 'woodtight'; } catch (e) { return 'woodtight'; } })(),
     clickVol: Math.pow(10, -10 * 0.5 / 20), takeVol: Math.pow(10, -10 * 0.5 / 20),
     mode: 'idle',          // idle | play | rec
     cursorBar: 0,          // נקודת ההתחלה, במספר תיבה (0 = תיבה 1)
@@ -462,9 +469,27 @@
     render();
   });
   $('pre-btn').addEventListener('click', function () { if (S.mode === 'idle') { S.pre = S.pre === 1 ? 2 : 1; render(); } });
-  $('sound-btn').addEventListener('click', async function () {
-    S.sound = SOUND_ORDER[(SOUND_ORDER.indexOf(S.sound) + 1) % SOUND_ORDER.length];
-    render();
+  // בחירת סאונד: רשימה עם דירוג של כמה קל להסיר
+  function renderSoundList() {
+    var html = '';
+    SOUND_ORDER.forEach(function (k) {
+      var s = SOUNDS[k], dots = '';
+      for (var i = 1; i <= 4; i++) dots += '<i class="' + (i <= s.ease ? 'on' : '') + '"></i>';
+      html += '<button class="snd" data-k="' + k + '" aria-pressed="' + (k === S.sound) + '">' +
+        '<span class="snd-name">' + s.name + (s.high ? ' <em>טוב לבס</em>' : '') + '</span>' +
+        '<span class="snd-desc">' + s.desc + '</span>' +
+        '<span class="ease" aria-label="קלות הסרה ' + s.ease + ' מתוך 4">' + dots + '</span></button>';
+    });
+    $('sound-list').innerHTML = html;
+  }
+  $('sound-btn').addEventListener('click', function () { renderSoundList(); $('sound-sheet').hidden = false; });
+  $('sound-close').addEventListener('click', function () { $('sound-sheet').hidden = true; });
+  $('sound-sheet').addEventListener('click', function (e) { if (e.target.id === 'sound-sheet') $('sound-sheet').hidden = true; });
+  $('sound-list').addEventListener('click', async function (e) {
+    var b = e.target.closest('.snd'); if (!b) return;
+    S.sound = b.dataset.k;
+    try { localStorage.setItem('bli-sound', S.sound); } catch (err) {}
+    renderSoundList(); render();
     if (S.mode === 'idle') { await initAudio(); playClick(ctx.currentTime + 0.02, 'top'); }
   });
   $('rec-btn').addEventListener('click', function () { if (S.mode === 'rec') stop(); else { if (S.mode === 'play') stop(); record(); } });
