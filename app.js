@@ -5,6 +5,14 @@
 
   var $ = function (id) { return document.getElementById(id); };
 
+  // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
+  var CODE_VERSION = '5';
+  if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
+    var tried = false;
+    try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
+    if (!tried) { location.replace(location.pathname + '?v=' + CODE_VERSION + '&t=' + Date.now()); return; }
+  }
+
   // ---------- נתונים קבועים ----------
   var SOUNDS = {
     wood:    { name: 'בלוק עץ', file: 'wood',   rate: { base: 1.0, mid: 1.12, top: 1.26 } },
