@@ -31,7 +31,7 @@
 
   var ctx = null, clickBus, takeBus, buffers = {};
   var recNode = null, micReady = false, chunks = [];
-  var songT0 = 0, nextBeat = 0, schedTimer = null, takeSrc = null, recFrom = 0;
+  var songT0 = 0, nextBeat = 0, schedTimer = null, takeSrc = null, recFrom = 0, recClicks = [];
   var wakeLock = null, peakHold = 0;
 
   // ---------- חישובי קצב ----------
@@ -124,7 +124,10 @@
       var idx = ((nextBeat % n) + n) % n;
       // בהקדמה הקליק תמיד מתנגן: הוא משמש גם ללמידה ולמדידת ההשהיה
       var inPre = S.mode === 'rec' && t < cursorSec() - 1e-6;
-      if (S.clickOn || inPre) playClick(songT0 + t, pat[idx]);
+      if (S.clickOn || inPre) {
+        playClick(songT0 + t, pat[idx]);
+        if (S.mode === 'rec') recClicks.push({ t: t, pos: idx, pre: inPre });
+      }
       nextBeat++;
     }
   }
@@ -137,6 +140,8 @@
     schedTimer = setInterval(scheduler, 25);
   }
 
+  function takeData(tk) { return tk.useClean && tk.clean ? tk.clean : tk.data; }
+
   function playTake(fromSec) {
     var tk = S.take;
     if (!tk) return;
@@ -147,7 +152,7 @@
     var dur = tk.data.length / tk.sr;
     if (offset >= dur) return;
     var buf = ctx.createBuffer(1, tk.data.length, tk.sr);
-    buf.copyToChannel(tk.data, 0);
+    buf.copyToChannel(takeData(tk), 0);
     takeSrc = ctx.createBufferSource();
     takeSrc.buffer = buf;
     takeSrc.connect(takeBus);
@@ -171,7 +176,7 @@
       setStatus('אין גישה למיקרופון. צריך לאשר את ההרשאה בדפדפן.');
       return;
     }
-    chunks = [];
+    chunks = []; recClicks = [];
     recFrom = cursorSec() - S.pre * barDur();
     S.mode = 'rec';
     startTransport(recFrom);
@@ -190,6 +195,7 @@
       S.stoppedAt = cursorSec();
     } else {
       S.stoppedAt = Math.max(0, pos);
+      setStatus('');
     }
     releaseWake();
     render();
@@ -208,9 +214,28 @@
     S.take = take;
     chunks = [];
     $('save-btn').disabled = false;
-    if (lat !== null) setStatus('ההקלטה נשמרה. ההשהיה נמדדה מקליקי ההקדמה ותוקנה.');
-    else if (prev !== null) setStatus('ההקלטה נשמרה. לא הצלחתי למדוד הפעם, אז השתמשתי בהשהיה מהמדידה הקודמת.');
+    var clicksUsed = recClicks.slice(); recClicks = [];
+    if (take.measured !== null) setTimeout(function () { cleanTake(take, clicksUsed); }, 30);
+    if (lat !== null || prev !== null) setStatus('מסיר את הקליק מההקלטה…');
     else setStatus('ההקלטה נשמרה, אבל לא שמעתי את הקליק בהקדמה, אז ההשהיה לא תוקנה. נסו להקדמה של 2 תיבות, או להגביר.');
+  }
+
+  // מוריד את הקליק מההקלטה, בשני שלבים (dsp.js)
+  function cleanTake(tk, clicks) {
+    var lat = tk.measured;
+    var list = clicks.map(function (c) {
+      return { idx: Math.round((c.t + lat - tk.start) * tk.sr), pos: c.pos, pre: c.pre };
+    });
+    try {
+      var r = window.ClickDSP.removeClicks(tk.data, tk.sr, list, {});
+      if (r.ok) {
+        tk.clean = r.clean; tk.useClean = true;
+        setStatus('הקליק הוסר מההקלטה. אפשר להשוות למקור בכפתור למעלה.');
+      } else setStatus('לא הצלחתי ללמוד את הקליק מההקדמה, אז הוא נשאר בהקלטה.');
+    } catch (e) {
+      setStatus('משהו השתבש בהסרת הקליק, ההקלטה המקורית נשמרה.');
+    }
+    render();
   }
 
   // מודד כמה זמן לוקח לקליק להגיע מהרמקול למיקרופון.
@@ -269,7 +294,7 @@
     var name = 'bli-ozniyot-' + S.bpm + 'bpm-' + S.meter.replace('/', '-') + '-' +
       d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' +
       String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0') + '.wav';
-    var blob = wavFloat32(S.take.data, S.take.sr); // הקובץ כולל גם את ההקדמה, כפי שהוקלטה
+    var blob = wavFloat32(takeData(S.take), S.take.sr); // נשמר מה שנשמע: נקי או מקור. כולל את ההקדמה
     var file = new File([blob], name, { type: 'audio/wav' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
@@ -335,7 +360,7 @@
     var acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim() || '#6fe0a8';
     var trackTop = top + 8, trackH = h - top - 16;
     if (S.take) {
-      var tk = S.take, st = tk.start + tk.latencyShift;
+      var tk = S.take, st = tk.start + tk.latencyShift, td = takeData(tk);
       var x0 = xOf(tk.punch), x1 = xOf(st + tk.data.length / tk.sr);
       if (x1 > x0) {
         g2.fillStyle = 'hsla(150,60%,45%,0.18)';
@@ -345,7 +370,7 @@
         var mid = trackTop + trackH / 2, spp = tk.sr * barDur() / layout.pxPerBar;
         for (var px = Math.ceil(x0) + 3; px < x1 - 3; px += 2) {
           var i0 = Math.floor((px / layout.pxPerBar * barDur() - st) * tk.sr), i1 = i0 + Math.ceil(spp * 2), pk = 0;
-          for (var i = Math.max(0, i0); i < Math.min(tk.data.length, i1); i++) { var a = Math.abs(tk.data[i]); if (a > pk) pk = a; }
+          for (var i = Math.max(0, i0); i < Math.min(td.length, i1); i++) { var a = Math.abs(td[i]); if (a > pk) pk = a; }
           var hh = Math.max(1, Math.min(1, pk * 1.4) * (trackH / 2 - 6));
           g2.fillRect(px, mid - hh, 1.5, hh * 2);
         }
@@ -435,6 +460,13 @@
   $('to-cursor').addEventListener('click', function () { var was = S.mode; if (was !== 'idle') stop(); S.stoppedAt = cursorSec(); if (was === 'play') play(); else render(); });
   $('to-start').addEventListener('click', function () { var was = S.mode; if (was !== 'idle') stop(); S.stoppedAt = 0; wrap.scrollLeft = 0; if (was === 'play') play(); else render(); });
   $('save-btn').addEventListener('click', saveTake);
+  $('ab-btn').addEventListener('click', function () {
+    if (!S.take || !S.take.clean) return;
+    var was = S.mode === 'play', pos = songNow();
+    if (was) stop();
+    S.take.useClean = !S.take.useClean;
+    if (was) { S.stoppedAt = Math.max(0, pos); play(); } else render();
+  });
   $('click-vol').addEventListener('input', function (e) { S.clickVol = e.target.value / 100; if (clickBus) clickBus.gain.setTargetAtTime(S.clickVol, ctx.currentTime, 0.01); });
   $('take-vol').addEventListener('input', function (e) { S.takeVol = e.target.value / 100; if (takeBus) takeBus.gain.setTargetAtTime(S.takeVol, ctx.currentTime, 0.01); });
   document.addEventListener('visibilitychange', function () { if (document.hidden && S.mode === 'play') stop(); });
@@ -454,6 +486,9 @@
     if (S.mode === 'rec') setStatus('הקדמה של ' + (S.pre === 1 ? 'תיבה אחת' : '2 תיבות') + ', ואז הקלטה מתיבה ' + (S.cursorBar + 1) + ' עד שעוצרים');
     else if (S.mode === 'play') setStatus('מנגן');
     $('latency').textContent = S.take && S.take.measured !== null ? 'השהיה: ' + Math.round(S.take.measured * 1000) + 'ms' : '';
+    var ab = $('ab-btn');
+    ab.hidden = !(S.take && S.take.clean);
+    if (S.take && S.take.clean) { ab.setAttribute('aria-pressed', String(S.take.useClean)); ab.textContent = S.take.useClean ? 'קליק הוסר' : 'מקור, עם קליק'; }
     renderDrum();
     draw();
   }
