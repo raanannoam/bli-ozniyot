@@ -35,7 +35,7 @@
     cursorBar: 0,          // נקודת ההתחלה, במספר תיבה (0 = תיבה 1)
     take: null,            // { data, sr, start, punch, latency }
     stoppedAt: 0,          // מיקום הסמן הלבן כשהכול עצור
-    level: (function () { try { return localStorage.getItem('bli-level') || 'strong'; } catch (e) { return 'strong'; } })()
+    level: (function () { try { return localStorage.getItem('bli-level') || 'medium'; } catch (e) { return 'medium'; } })()
   };
 
   var ctx = null, clickBus, takeBus, buffers = {};
