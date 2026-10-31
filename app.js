@@ -22,7 +22,7 @@
   // ---------- מצב ----------
   var S = {
     bpm: 92, meter: '4/4', pre: 1, sound: 'wood', clickOn: true,
-    clickVol: 0.8, takeVol: 0.9,
+    clickVol: Math.pow(10, -10 * 0.5 / 20), takeVol: Math.pow(10, -10 * 0.5 / 20),
     mode: 'idle',          // idle | play | rec
     cursorBar: 0,          // נקודת ההתחלה, במספר תיבה (0 = תיבה 1)
     take: null,            // { data, sr, start, punch, latency }
@@ -481,8 +481,13 @@
       if (was) { S.stoppedAt = Math.max(0, pos); play(); } else render();
     });
   });
-  $('click-vol').addEventListener('input', function (e) { S.clickVol = e.target.value / 100; if (clickBus) clickBus.gain.setTargetAtTime(S.clickVol, ctx.currentTime, 0.01); });
-  $('take-vol').addEventListener('input', function (e) { S.takeVol = e.target.value / 100; if (takeBus) takeBus.gain.setTargetAtTime(S.takeVol, ctx.currentTime, 0.01); });
+  // פיידרים בדציבלים: כל הזזה נשמעת. 100 = עוצמה מלאה, כל 10 = בערך 5 דציבלים, 0 = שקט
+  function faderGain(v) { v = +v; return v <= 0 ? 0 : Math.pow(10, (v - 100) * 0.5 / 20); }
+  function showDb(id, v) { $(id).textContent = +v <= 0 ? '−∞' : String(Math.round((v - 100) * 0.5)); }
+  $('click-vol').addEventListener('input', function (e) { showDb('click-db', e.target.value); });
+  $('take-vol').addEventListener('input', function (e) { showDb('take-db', e.target.value); });
+  $('click-vol').addEventListener('input', function (e) { S.clickVol = faderGain(e.target.value); if (clickBus) clickBus.gain.setTargetAtTime(S.clickVol, ctx.currentTime, 0.01); });
+  $('take-vol').addEventListener('input', function (e) { S.takeVol = faderGain(e.target.value); if (takeBus) takeBus.gain.setTargetAtTime(S.takeVol, ctx.currentTime, 0.01); });
   document.addEventListener('visibilitychange', function () { if (document.hidden && S.mode === 'play') stop(); });
 
   function setStatus(t) { $('status').textContent = t; }
