@@ -8,7 +8,7 @@
 <title>בלי אוזניות</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 <div class="app" id="app">
@@ -59,7 +59,9 @@
   <!-- מרכז -->
   <main class="center">
     <div class="status-row">
+      <button class="btn inst" id="inst-btn">כלי: <b id="inst-name">בחרו</b></button>
       <span class="status" id="status">נגיעה בציר הזמן קובעת מאיפה מקליטים</span>
+      <button class="btn suggest" id="suggest-btn" hidden></button>
       <div class="levels" id="levels" role="group" aria-label="הסרת קליק" hidden>
         <button class="btn lv" data-level="orig">מקור</button>
         <button class="btn lv" data-level="medium">בינוני</button>
@@ -104,13 +106,24 @@
   </div>
 </div>
 
+<div class="sheet" id="inst-sheet" hidden>
+  <div class="glass sheet-box" role="dialog" aria-labelledby="inst-title">
+    <div class="sheet-head">
+      <h2 id="inst-title">מה מקליטים עכשיו?</h2>
+      <span class="sheet-note">לפי הכלי, האפליקציה תציע קליק שיהיה קל יותר להסיר.</span>
+      <button class="btn small" id="inst-close" aria-label="סגירה">✕</button>
+    </div>
+    <div class="sound-list" id="inst-list"></div>
+  </div>
+</div>
+
 <div class="rotate">
   <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M20 12a8 8 0 0 1-3 6"/><path d="M17 15v3h3"/></svg>
   <p>סובבו את הטלפון לרוחב</p>
 </div>
 
-<script>window.BLI_PAGE_VERSION = "7";</script>
-<script src="dsp.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script>window.BLI_PAGE_VERSION = "8";</script>
+<script src="dsp.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

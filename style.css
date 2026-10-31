@@ -138,3 +138,8 @@ input.vertical { writing-mode: vertical-lr; direction: rtl; flex: 1; width: 28px
 .ease { display: flex; gap: 3px; margin-top: 2px; }
 .ease i { width: 8px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.14); }
 .ease i.on { background: var(--acc); }
+.btn.inst, .btn.suggest { min-height: 30px; font-size: 12px; padding: 0 12px; border-radius: 15px; flex: none; }
+.btn.inst b { color: var(--acc); }
+.btn.suggest { background: var(--acc); color: var(--bg); font-weight: 700; }
+.btn.suggest[hidden] { display: none; }
+#inst-list { grid-template-columns: repeat(4, minmax(0, 1fr)); }

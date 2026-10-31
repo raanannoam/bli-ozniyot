@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '7';
+  var CODE_VERSION = '8';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -26,6 +26,12 @@
     lowwood:   { name: 'עץ נמוך',    desc: 'עמוק ורך',            file: 'wood2',     ease: 2, high: false, rate: { base: 0.6, mid: 0.67, top: 0.75 } },
     shaker:    { name: 'שייקר',      desc: 'רך ומוזיקלי',         file: 'shaker',    ease: 1, high: true,  rate: { base: 1.0, mid: 1.06, top: 1.12 } }
   };
+  // כלים: prefer = איזה קליק עדיף. high = צליל גבוה (רחוק מהבס), low = צליל עמוק יותר (רחוק מכלים גבוהים)
+  var INSTRUMENTS = [
+    { k: 'guitar', name: 'גיטרה' }, { k: 'bass', name: 'בס', prefer: 'high' }, { k: 'voice', name: 'קול' },
+    { k: 'drums', name: 'תופים' }, { k: 'perc', name: 'כלי הקשה', prefer: 'low' }, { k: 'keys', name: 'מקלדים' },
+    { k: 'violin', name: 'כינור', prefer: 'low' }, { k: 'other', name: 'אחר' }
+  ];
   var SOUND_ORDER = ['clap', 'woodtight', 'cajon', 'cabasa', 'bongo', 'wood', 'claves', 'lowwood', 'shaker'];
   var LEVEL_GAIN = { base: 0.7, mid: 0.85, top: 1.0 };
   var METERS = ['2/4', '3/4', '4/4', '5/4', '7/4', '5/8', '6/8', '7/8', '9/8', '10/8', '12/8'];
@@ -35,7 +41,7 @@
 
   // ---------- מצב ----------
   var S = {
-    bpm: 92, meter: '4/4', pre: 1, clickOn: true,
+    bpm: 92, meter: '4/4', pre: 1, clickOn: true, instrument: null,
     sound: (function () { try { var v = localStorage.getItem('bli-sound'); return v || 'woodtight'; } catch (e) { return 'woodtight'; } })(),
     clickVol: Math.pow(10, -10 * 0.5 / 20), takeVol: Math.pow(10, -10 * 0.5 / 20),
     mode: 'idle',          // idle | play | rec
@@ -47,7 +53,7 @@
 
   var ctx = null, clickBus, takeBus, buffers = {};
   var recNode = null, micReady = false, chunks = [];
-  var songT0 = 0, nextBeat = 0, schedTimer = null, takeSrc = null, recFrom = 0, recClicks = [];
+  var songT0 = 0, nextBeat = 0, schedTimer = null, takeSrc = null, recFrom = 0, recClicks = [], livePeaks = [], liveLat = 0;
   var wakeLock = null, peakHold = 0;
 
   // ---------- חישובי קצב ----------
@@ -116,7 +122,10 @@
     src.connect(recNode); recNode.connect(sink); sink.connect(ctx.destination);
     recNode.port.onmessage = function (e) {
       if (e.data.p > peakHold) peakHold = e.data.p;
-      if (S.mode === 'rec') chunks.push(e.data);
+      if (S.mode === 'rec') {
+        chunks.push(e.data);
+        livePeaks.push({ t: e.data.t - songT0 - liveLat, d: e.data.d.length / ctx.sampleRate, p: e.data.p });
+      }
     };
     micReady = true;
   }
@@ -192,7 +201,7 @@
       setStatus('אין גישה למיקרופון. צריך לאשר את ההרשאה בדפדפן.');
       return;
     }
-    chunks = []; recClicks = [];
+    chunks = []; recClicks = []; livePeaks = []; liveLat = lastLatency() || 0;
     recFrom = cursorSec() - S.pre * barDur();
     S.mode = 'rec';
     startTransport(recFrom);
@@ -378,7 +387,7 @@
     // ההקלטה
     var acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim() || '#6fe0a8';
     var trackTop = top + 8, trackH = h - top - 16;
-    if (S.take) {
+    if (S.take && S.mode !== 'rec') {
       var tk = S.take, st = tk.start + tk.latencyShift, td = takeData(tk);
       var x0 = xOf(tk.punch), x1 = xOf(st + tk.data.length / tk.sr);
       if (x1 > x0) {
@@ -393,6 +402,32 @@
           var hh = Math.max(1, Math.min(1, pk * 1.4) * (trackH / 2 - 6));
           g2.fillRect(px, mid - hh, 1.5, hh * 2);
         }
+      }
+    }
+    // הקלטה חיה: אזור אדום שגדל, עם הגל כפי שהוא נכנס
+    if (S.mode === 'rec') {
+      var now = songNow() - liveLat, rx0 = xOf(Math.max(0, recFrom)), rx1 = xOf(Math.max(recFrom, now));
+      var cx0 = xOf(cursorSec());
+      if (rx1 > cx0) {
+        g2.fillStyle = 'rgba(238,51,72,0.14)'; roundRect(cx0 + 1, trackTop, rx1 - cx0 - 1, trackH, 10); g2.fill();
+        g2.strokeStyle = 'rgba(255,90,106,0.8)'; g2.lineWidth = 1.5; g2.stroke();
+      }
+      var midL = trackTop + trackH / 2;
+      for (var q = 0; q < livePeaks.length; q++) {
+        var lp = livePeaks[q]; if (lp.t + lp.d < 0) continue;
+        var lx = xOf(lp.t), lw = Math.max(1, xOf(lp.t + lp.d) - lx - 0.5);
+        var lh = Math.max(1, Math.min(1, lp.p * 1.4) * (trackH / 2 - 6));
+        g2.fillStyle = lp.t < cursorSec() ? 'rgba(255,255,255,0.25)' : '#FF8E99';
+        g2.fillRect(lx, midL - lh, lw, lh * 2);
+      }
+      // תגית "מקליט" מהבהבת
+      if (Math.floor(performance.now() / 500) % 2 === 0 || now < cursorSec()) {
+        var lbl = now < cursorSec() ? 'הקדמה ' + Math.max(1, Math.ceil((cursorSec() - now) / beatDur())) : '● מקליט';
+        g2.font = '700 12px Heebo, sans-serif';
+        var tw = g2.measureText(lbl).width + 16, tx = Math.max(4, Math.min(rx1 - tw - 6, w - tw - 4));
+        g2.fillStyle = now < cursorSec() ? 'rgba(255,255,255,0.85)' : 'rgba(238,51,72,0.95)';
+        roundRect(tx, trackTop + 6, tw, 22, 6); g2.fill();
+        g2.fillStyle = now < cursorSec() ? '#0C0E12' : '#fff'; g2.textAlign = 'center'; g2.fillText(lbl, tx + tw / 2, trackTop + 21); g2.textAlign = 'start';
       }
     }
     // נקודת ההתחלה
@@ -469,6 +504,43 @@
     render();
   });
   $('pre-btn').addEventListener('click', function () { if (S.mode === 'idle') { S.pre = S.pre === 1 ? 2 : 1; render(); } });
+  // ---------- בחירת כלי, והצעת קליק מתאים ----------
+  function suggestFor(inst) {
+    var cur = SOUNDS[S.sound];
+    if (inst.prefer === 'high' && !cur.high) return { k: 'clap', why: 'לבס עדיף קליק גבוה, כדי שההסרה לא תפגע בבס.' };
+    if (inst.prefer === 'low' && cur.high) return { k: 'woodtight', why: 'ל' + inst.name + ' עדיף קליק עמוק יותר, רחוק מהצליל של הכלי.' };
+    return null;
+  }
+  function showSuggestion() {
+    var inst = INSTRUMENTS.filter(function (i) { return i.k === S.instrument; })[0], btn = $('suggest-btn');
+    var sg = inst ? suggestFor(inst) : null;
+    if (!sg) { btn.hidden = true; return; }
+    setStatus(sg.why);
+    btn.textContent = 'להחליף ל' + SOUNDS[sg.k].name;
+    btn.dataset.k = sg.k; btn.hidden = false;
+  }
+  $('suggest-btn').addEventListener('click', async function () {
+    S.sound = this.dataset.k; this.hidden = true;
+    try { localStorage.setItem('bli-sound', S.sound); } catch (e) {}
+    setStatus('הקליק הוחלף ל' + SOUNDS[S.sound].name);
+    render();
+    if (S.mode === 'idle') { await initAudio(); playClick(ctx.currentTime + 0.02, 'top'); }
+  });
+  $('inst-btn').addEventListener('click', function () {
+    $('inst-list').innerHTML = INSTRUMENTS.map(function (i) {
+      return '<button class="snd" data-k="' + i.k + '" aria-pressed="' + (i.k === S.instrument) + '"><span class="snd-name">' + i.name + '</span></button>';
+    }).join('');
+    $('inst-sheet').hidden = false;
+  });
+  $('inst-close').addEventListener('click', function () { $('inst-sheet').hidden = true; });
+  $('inst-sheet').addEventListener('click', function (e) { if (e.target.id === 'inst-sheet') $('inst-sheet').hidden = true; });
+  $('inst-list').addEventListener('click', function (e) {
+    var b = e.target.closest('.snd'); if (!b) return;
+    S.instrument = b.dataset.k;
+    $('inst-sheet').hidden = true;
+    render(); showSuggestion();
+  });
+
   // בחירת סאונד: רשימה עם דירוג של כמה קל להסיר
   function renderSoundList() {
     var html = '';
@@ -489,7 +561,7 @@
     var b = e.target.closest('.snd'); if (!b) return;
     S.sound = b.dataset.k;
     try { localStorage.setItem('bli-sound', S.sound); } catch (err) {}
-    renderSoundList(); render();
+    renderSoundList(); render(); showSuggestion();
     if (S.mode === 'idle') { await initAudio(); playClick(ctx.currentTime + 0.02, 'top'); }
   });
   $('rec-btn').addEventListener('click', function () { if (S.mode === 'rec') stop(); else { if (S.mode === 'play') stop(); record(); } });
@@ -533,6 +605,8 @@
     $('meter-btn').textContent = S.meter;
     $('pre-val').textContent = S.pre;
     $('sound-name').textContent = SOUNDS[S.sound].name;
+    var inst = INSTRUMENTS.filter(function (i) { return i.k === S.instrument; })[0];
+    $('inst-name').textContent = inst ? inst.name : 'בחרו';
     $('rec-btn').setAttribute('aria-label', S.mode === 'rec' ? 'עצירת הקלטה' : 'הקלטה');
     $('play-btn').setAttribute('aria-label', S.mode === 'play' ? 'השהיה' : 'ניגון');
     if (S.mode === 'rec') setStatus('הקדמה של ' + (S.pre === 1 ? 'תיבה אחת' : '2 תיבות') + ', ואז הקלטה מתיבה ' + (S.cursorBar + 1) + ' עד שעוצרים');
