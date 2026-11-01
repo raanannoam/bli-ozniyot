@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '12';
+  var CODE_VERSION = '13';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -51,7 +51,8 @@
     take: null,            // { data, sr, start, punch, latency }
     stoppedAt: 0,          // מיקום הסמן הלבן כשהכול עצור
     level: (function () { try { var v = localStorage.getItem('bli-level3'); return v && LEVEL_OK[v] ? v : 'strong'; } catch (e) { return 'strong'; } })(),
-    endBar: null,          // סמן הסיום, במספר תיבה. null = סוף השיר (מקליטים עד שעוצרים)
+    endBar: 4,             // סמן הסיום, במספר תיבה (תמיד יש לו מקום)
+    endInf: true,          // אינסוף: מקליטים בלי גבול, עד שעוצרים. נגיעה בידית של הסיום מחליפה
     undo: []
   };
 
@@ -265,7 +266,7 @@
       return;
     }
     chunks = []; recClicks = []; livePeaks = []; liveLat = lastLatency() || 0;
-    recLimit = S.endBar !== null ? S.endBar * barDur() : null;
+    recLimit = S.endInf ? null : endSec();
     recFrom = cursorSec() - S.pre * barDur();
     S.mode = 'rec';
     // מה שהרמקול ינגן מהמיכל, בעוצמה הנוכחית: זה ה"רקע" שנחסיר אחר כך
@@ -429,11 +430,8 @@
 
   // סוף התוכן בערוץ העבודה (בשניות)
   function contentEnd() { var e = 0; visibleSegments().forEach(function (s) { e = Math.max(e, s.b); }); return e; }
-  // מיקום סמן הסיום: תיבה שנבחרה, או אחרי התוכן ("סוף")
-  function endSec() {
-    if (S.endBar !== null) return S.endBar * barDur();
-    return Math.max(cursorSec() + barDur(), Math.ceil(contentEnd() / barDur() - 1e-6) * barDur());
-  }
+  // מיקום סמן הסיום. תמיד לפחות תיבה אחת אחרי ההתחלה
+  function endSec() { return Math.max(S.endBar, S.cursorBar + 1) * barDur(); }
   function songBars() {
     var end = Math.max(cursorSec() + barDur() * 2, endSec() + barDur());
     S.clips.forEach(function (c) { end = Math.max(end, clipEnd(c)); });
@@ -534,10 +532,17 @@
     }
     // שני הסמנים: התחלה וסיום, עם ידיות, והאזור שביניהם
     var cx = xOf(cursorSec()), ex = xOf(endSec());
-    g2.fillStyle = 'rgba(255,90,106,0.07)'; g2.fillRect(cx, 0, ex - cx, h);
-    [[cx, 'התחלה'], [ex, S.endBar === null ? 'סוף' : 'סיום']].forEach(function (m, mi) {
+    g2.fillStyle = S.endInf ? 'rgba(255,90,106,0.04)' : 'rgba(255,90,106,0.08)'; g2.fillRect(cx, 0, ex - cx, h);
+    if (!S.endInf) {
+      var nb = Math.round((endSec() - cursorSec()) / barDur()), tl = nb === 1 ? 'תיבה אחת' : nb + ' תיבות';
+      g2.font = '700 11px Heebo, sans-serif'; g2.textAlign = 'center'; g2.fillStyle = 'rgba(255,194,200,0.9)';
+      if (ex - cx > 60) g2.fillText(tl, (cx + ex) / 2, 34);
+      g2.textAlign = 'start';
+    }
+    [[cx, 'התחלה'], [ex, S.endInf ? '∞ בלי גבול' : 'סוף']].forEach(function (m, mi) {
       var mx = m[0];
-      g2.fillStyle = mi === 1 && S.endBar === null ? 'rgba(255,90,106,0.55)' : '#FF5A6A'; g2.fillRect(mx - 1, 0, 2, h);
+      if (mi === 1 && S.endInf) { g2.fillStyle = 'rgba(255,90,106,0.5)'; for (var dy = 0; dy < h; dy += 8) g2.fillRect(mx - 1, dy, 2, 4); }
+      else { g2.fillStyle = '#FF5A6A'; g2.fillRect(mx - 1, 0, 2, h); }
       g2.fillStyle = 'rgba(238,51,72,0.95)'; roundRect(mx - 14, 0, 28, 22, 7); g2.fill();
       g2.fillStyle = 'rgba(255,255,255,0.9)';
       for (var gi = -1; gi <= 1; gi++) g2.fillRect(mx + gi * 4 - 0.75, 6, 1.5, 10);
@@ -635,28 +640,39 @@
     if (!gest.which) { wrap.scrollLeft = gest.sl - (e.clientX - gest.x0); return; }
     var r = cv.getBoundingClientRect(), bar = Math.round((e.clientX - r.left) / layout.pxPerBar);
     if (gest.which === 'start') {
-      var maxB = S.endBar !== null ? S.endBar - 1 : layout.bars - 1;
-      S.cursorBar = Math.max(0, Math.min(maxB, bar)); S.stoppedAt = cursorSec();
-      setStatus('התחלה: תיבה ' + (S.cursorBar + 1));
+      // ההתחלה זזה לבד, והסיום נשאר. לפחות תיבה אחת ביניהם
+      S.cursorBar = Math.max(0, Math.min(S.endBar - 1, bar)); S.stoppedAt = cursorSec();
+      setStatus('התחלה: תיבה ' + (S.cursorBar + 1) + lenText());
     } else {
-      var lastBar = Math.ceil(contentEnd() / barDur() - 1e-6);
-      bar = Math.max(S.cursorBar + 1, bar);
-      S.endBar = bar >= Math.max(lastBar, S.cursorBar + 1) + 1 ? null : bar;
-      setStatus(S.endBar === null ? 'סיום: סוף השיר. מקליטים עד שעוצרים' : 'סיום: תחילת תיבה ' + (S.endBar + 1));
+      S.endBar = Math.max(S.cursorBar + 1, bar);
+      setStatus('סוף: תחילת תיבה ' + (S.endBar + 1) + lenText());
     }
     render();
   });
   function endGesture(e) {
     if (!gest) return;
     var g = gest; gest = null;
-    if (g.moved || g.which || S.mode !== 'idle') return;
+    if (g.moved || S.mode !== 'idle') return;
+    // נגיעה בידית של הסיום: מחליפה בין "סוף" לבין אינסוף
+    if (g.which === 'end') {
+      S.endInf = !S.endInf;
+      setStatus(S.endInf ? 'בלי גבול: מקליטים עד שעוצרים' : 'ההקלטה תיעצר לבד בסוף' + lenText());
+      render(); return;
+    }
+    if (g.which) return;
     var r = cv.getBoundingClientRect();
     var bar = Math.max(0, Math.round((e.clientX - r.left) / layout.pxPerBar));
-    if (S.endBar !== null && bar >= S.endBar) S.endBar = null;
+    var len = S.endBar - S.cursorBar;
     S.cursorBar = bar;
+    if (S.endBar <= bar) S.endBar = bar + len;   // אם ההתחלה עברה את הסוף, הסוף זז איתה ושומר על האורך
     S.stoppedAt = cursorSec();
-    setStatus('ההקלטה תתחיל בתיבה ' + (S.cursorBar + 1));
+    setStatus('ההקלטה תתחיל בתיבה ' + (S.cursorBar + 1) + lenText());
     render();
+  }
+  function lenText() {
+    if (S.endInf) return ', בלי גבול';
+    var n = S.endBar - S.cursorBar;
+    return ', ' + (n === 1 ? 'תיבה אחת' : n + ' תיבות');
   }
   cv.addEventListener('pointerup', endGesture);
   cv.addEventListener('pointercancel', function () { gest = null; });
@@ -668,12 +684,12 @@
   }
   $('del-btn').addEventListener('click', function () {
     if (S.mode !== 'idle' || !S.clips.length) return;
-    var a = cursorSec(), b = endSec();
+    var a = cursorSec(), b = S.endInf ? Math.max(endSec(), contentEnd()) : endSec();
     if (b <= a) return;
     pushUndo();
     S.clips.push({ erase: true, punch: a, endT: b });
     invalidateWork();
-    setStatus('נמחק מתיבה ' + (S.cursorBar + 1) + ' עד ' + (S.endBar === null ? 'הסוף' : 'תיבה ' + S.endBar) + '. "ביטול" מחזיר.');
+    setStatus('נמחק מתיבה ' + (S.cursorBar + 1) + ' עד ' + (S.endInf ? 'סוף ההקלטה' : 'תחילת תיבה ' + (S.endBar + 1)) + '. "ביטול" מחזיר.');
     render();
   });
   $('undo-btn').addEventListener('click', function () {
@@ -844,7 +860,7 @@
     var name = $('name-input').value.trim() || ('הקלטה ' + (S.mix.length + 1));
     pushUndo();
     S.mix.push({ name: name, data: Float32Array.from(wt), sr: ctx ? ctx.sampleRate : 48000, muted: false, clips: S.clips.slice() });
-    S.clips = []; S.take = null; S.endBar = null; invalidateWork(); invalidateMix();
+    S.clips = []; S.take = null; invalidateWork(); invalidateMix();
     $('save-btn').disabled = true;
     $('name-sheet').hidden = true;
     S.instrument = null; $('suggest-btn').hidden = true;
