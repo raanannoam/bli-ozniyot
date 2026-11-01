@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '15';
+  var CODE_VERSION = '16';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -43,6 +43,7 @@
 
   // ---------- מצב ----------
   var S = {
+    songId: null, songName: 'שיר', created: 0,
     bpm: 92, meter: '4/4', pre: 1, clickOn: true, instrument: null, clips: [], mix: [], mixVol: Math.pow(10, -10 * 0.5 / 20),
     sound: (function () { try { var v = localStorage.getItem('bli-sound'); return v || 'woodtight'; } catch (e) { return 'woodtight'; } })(),
     clickVol: Math.pow(10, -10 * 0.5 / 20), takeVol: Math.pow(10, -10 * 0.5 / 20),
@@ -403,12 +404,17 @@
   }
 
   async function saveTake() {
-    if (!S.take) return;
+    var wt = workTrack(); if (!wt) return;
+    // נשמר מה שנשמע: ערוץ העבודה מתחילת השיר, נקי או מקור
+    shareWav(wt, ctx ? ctx.sampleRate : 48000, (S.level === 'orig' ? 'מקור' : 'נקי'));
+  }
+  async function shareWav(arr, sr, label) {
     var d = new Date();
-    var name = 'bli-ozniyot-' + S.bpm + 'bpm-' + S.meter.replace('/', '-') + '-' +
+    var safe = (S.songName + '-' + label).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '_');
+    var name = safe + '-' + S.bpm + 'bpm-' + S.meter.replace('/', '-') + '-' +
       d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' +
       String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0') + '.wav';
-    var blob = wavFloat32(workTrack(), S.take.sr); // נשמר מה שנשמע: ערוץ העבודה מתחילת השיר, נקי או מקור
+    var blob = wavFloat32(arr, sr);
     var file = new File([blob], name, { type: 'audio/wav' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
@@ -903,6 +909,7 @@
         '<span class="nm"><i class="dot" style="background:hsl(' + hueOf(i) + ' 62% 60%)"></i>' + m.name.replace(/</g, '&lt;') + '</span>' +
         '<button class="btn" data-a="mute" data-i="' + i + '">' + (m.muted ? 'מושתק' : 'פעיל') + '</button>' +
         '<button class="btn" data-a="edit" data-i="' + i + '">לעריכה</button>' +
+        '<button class="btn" data-a="save" data-i="' + i + '" aria-label="שמירה כקובץ">שמירה</button>' +
         '<button class="btn danger" data-a="del" data-i="' + i + '">' + (confirmDel === i ? 'בטוח?' : 'מחיקה') + '</button></div>';
     }).join('');
   }
@@ -913,6 +920,7 @@
     var b = e.target.closest('button'); if (!b) return;
     var i = +b.dataset.i, m = S.mix[i];
     if (S.mode !== 'idle') stop();
+    if (b.dataset.a === 'save') { shareWav(m.data, m.sr, m.name); return; }
     if (b.dataset.a === 'mute') { m.muted = !m.muted; invalidateMix(); confirmDel = -1; }
     else if (b.dataset.a === 'del') {
       if (confirmDel !== i) { confirmDel = i; renderMixList(); return; }
@@ -937,8 +945,179 @@
 
   function setStatus(t) { $('status').textContent = t; }
 
+  // ---------- שמירה אוטומטית ----------
+  var AID = new WeakMap(), saveTimer = null, loading = false;
+  function aidOf(arr, pending) {
+    if (!arr) return null;
+    var id = AID.get(arr);
+    if (!id) { id = window.Store.newId(); AID.set(arr, id); pending.push([id, arr]); }
+    return id;
+  }
+  function clipMeta(c, pending) {
+    if (c.erase) return { erase: true, punch: c.punch, endT: c.endT };
+    return {
+      punch: c.punch, start: c.start, latencyShift: c.latencyShift, measured: c.measured, sr: c.sr, limit: c.limit == null ? null : c.limit,
+      preFrom: c.preFrom, cleanLevel: c.cleanLevel || null, useClean: !!c.useClean,
+      data: aidOf(c.data, pending), s1: aidOf(c.s1, pending), est: aidOf(c.est, pending)
+    };
+  }
+  function songMeta(pending) {
+    var ids = [];
+    function track(m) { ['data', 's1', 'est'].forEach(function (k) { if (m[k]) ids.push(m[k]); }); return m; }
+    var faders = {}; ['take-vol', 'click-vol', 'mix-vol'].forEach(function (k) { faders[k] = +$(k).value; });
+    return {
+      id: S.songId, name: S.songName, created: S.created, updated: Date.now(),
+      settings: { bpm: S.bpm, meter: S.meter, pre: S.pre, clickOn: S.clickOn, instrument: S.instrument, sound: S.sound,
+        level: S.level === 'orig' ? goodLevel() : S.level, cursorBar: S.cursorBar, endBar: S.endBar, endInf: S.endInf, zoom: S.zoom, faders: faders },
+      clips: S.clips.map(function (c) { return track(clipMeta(c, pending)); }),
+      mix: S.mix.map(function (m) {
+        return { name: m.name, muted: !!m.muted, sr: m.sr, data: (function () { var id = aidOf(m.data, pending); ids.push(id); return id; })(),
+          clips: (m.clips || []).map(function (c) { return track(clipMeta(c, pending)); }) };
+      }),
+      audioIds: ids,
+      takes: S.mix.length
+    };
+  }
+  function scheduleSave() {
+    if (loading || !S.songId || !window.Store) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, 700);
+  }
+  async function saveNow() {
+    clearTimeout(saveTimer); saveTimer = null;
+    if (loading || !S.songId || S.mode === 'rec') { if (S.mode === 'rec') scheduleSave(); return; }
+    var pending = [], meta = songMeta(pending);
+    try {
+      for (var i = 0; i < pending.length; i++) await window.Store.putAudio(pending[i][0], pending[i][1]);
+      await window.Store.putSong(meta);
+      try { localStorage.setItem('bli-last-song', S.songId); } catch (e) {}
+    } catch (e) {
+      pending.forEach(function (p) { AID.delete(p[1]); });
+      setStatus('השמירה נכשלה. ייתכן שהזיכרון בטלפון מלא.');
+    }
+  }
+  document.addEventListener('visibilitychange', function () { if (document.hidden && saveTimer) saveNow(); });
+
+  async function loadArr(id) { if (!id) return null; var a = await window.Store.getAudio(id); if (a) AID.set(a, id); return a || null; }
+  async function clipFrom(m) {
+    if (m.erase) return { erase: true, punch: m.punch, endT: m.endT };
+    var c = { punch: m.punch, start: m.start, latencyShift: m.latencyShift, measured: m.measured, sr: m.sr, limit: m.limit, preFrom: m.preFrom,
+      cleanLevel: m.cleanLevel, useClean: m.useClean };
+    c.data = await loadArr(m.data); c.s1 = await loadArr(m.s1); c.est = await loadArr(m.est);
+    if (c.s1 && c.est) c.clean = window.ClickDSP.stage2(c.s1, c.est, window.ClickDSP.LEVELS[c.cleanLevel || 'strong'] || window.ClickDSP.LEVELS.strong);
+    return c;
+  }
+  async function loadSong(id) {
+    var meta = await window.Store.getSong(id);
+    if (!meta) return false;
+    if (S.mode !== 'idle') stop();
+    loading = true;
+    try {
+      var st = meta.settings || {};
+      S.songId = meta.id; S.songName = meta.name; S.created = meta.created || Date.now();
+      ['bpm', 'meter', 'pre', 'clickOn', 'instrument', 'sound', 'level', 'cursorBar', 'endBar', 'endInf', 'zoom'].forEach(function (k) { if (st[k] !== undefined) S[k] = st[k]; });
+      if (!SOUNDS[S.sound]) S.sound = 'woodtight';
+      if (st.faders) Object.keys(st.faders).forEach(function (k) { var el = $(k); if (el) { el.value = st.faders[k]; el.dispatchEvent(new Event('input')); } });
+      S.clips = []; for (var i = 0; i < (meta.clips || []).length; i++) S.clips.push(await clipFrom(meta.clips[i]));
+      S.mix = [];
+      for (i = 0; i < (meta.mix || []).length; i++) {
+        var mm = meta.mix[i], cl = [];
+        for (var j = 0; j < (mm.clips || []).length; j++) cl.push(await clipFrom(mm.clips[j]));
+        S.mix.push({ name: mm.name, muted: mm.muted, sr: mm.sr, data: await loadArr(mm.data), clips: cl });
+      }
+      S.take = null; S.clips.forEach(function (c) { if (!c.erase) S.take = c; });
+      S.undo = []; S.stoppedAt = cursorSec();
+      invalidateWork(); invalidateMix();
+      try { localStorage.setItem('bli-last-song', S.songId); } catch (e) {}
+      $('zoom-val').textContent = '×' + (Math.round(S.zoom * 10) / 10);
+      setStatus('״' + S.songName + '״ נפתח');
+    } finally { loading = false; }
+    render();
+    return true;
+  }
+  async function newSong() {
+    if (S.mode !== 'idle') stop();
+    var all = []; try { all = await window.Store.allSongs(); } catch (e) {}
+    S.songId = window.Store.newId(); S.created = Date.now();
+    S.songName = 'שיר ' + (all.length + 1);
+    S.clips = []; S.mix = []; S.take = null; S.undo = []; S.instrument = null;
+    S.cursorBar = 0; S.endBar = 4; S.endInf = true; S.stoppedAt = 0;
+    invalidateWork(); invalidateMix();
+    setStatus('שיר חדש: ״' + S.songName + '״');
+    render(); saveNow();
+  }
+  async function startup() {
+    if (!window.Store) return;
+    window.Store.persist();
+    var last = null; try { last = localStorage.getItem('bli-last-song'); } catch (e) {}
+    try {
+      if (last && await loadSong(last)) return;
+      var all = await window.Store.allSongs();
+      if (all.length) { all.sort(function (a, b) { return b.updated - a.updated; }); if (await loadSong(all[0].id)) return; }
+    } catch (e) {}
+    newSong();
+  }
+
+  // ---------- מסך השירים ----------
+  var renaming = null, confirmSongDel = null;
+  async function renderSongs() {
+    var all = []; try { all = await window.Store.allSongs(); } catch (e) {}
+    all.sort(function (a, b) { return b.updated - a.updated; });
+    $('songs-list').innerHTML = all.map(function (m) {
+      var d = new Date(m.updated), st = m.settings || {};
+      var when = d.getDate() + '.' + (d.getMonth() + 1) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      var nm = renaming === m.id
+        ? '<input class="text-in" id="rename-in" value="' + m.name.replace(/"/g, '&quot;') + '">'
+        : '<span>' + m.name.replace(/</g, '&lt;') + '</span><span class="song-meta">' + when + ' · ' + (st.bpm || '') + ' · ' + (st.meter || '') + ' · ' + (m.takes || 0) + ' במיקס</span>';
+      return '<div class="mix-row' + (m.id === S.songId ? ' current' : '') + '"><span class="nm">' + nm + '</span>' +
+        (renaming === m.id ? '<button class="btn" data-a="rename-ok" data-id="' + m.id + '">אישור</button>'
+          : '<button class="btn" data-a="open" data-id="' + m.id + '">' + (m.id === S.songId ? 'פתוח' : 'פתיחה') + '</button>' +
+            '<button class="btn" data-a="rename" data-id="' + m.id + '">שם</button>' +
+            '<button class="btn" data-a="dup" data-id="' + m.id + '">שכפול</button>' +
+            '<button class="btn danger" data-a="del" data-id="' + m.id + '">' + (confirmSongDel === m.id ? 'בטוח?' : 'מחיקה') + '</button>') +
+        '</div>';
+    }).join('') || '<div class="mix-empty">אין עדיין שירים.</div>';
+    var ri = $('rename-in'); if (ri) { ri.focus(); ri.select(); }
+  }
+  $('songs-btn').addEventListener('click', async function () {
+    if (S.mode !== 'idle') stop();
+    await saveNow(); renaming = null; confirmSongDel = null;
+    await renderSongs(); $('songs-sheet').hidden = false;
+  });
+  $('songs-close').addEventListener('click', function () { $('songs-sheet').hidden = true; });
+  $('songs-sheet').addEventListener('click', function (e) { if (e.target.id === 'songs-sheet') $('songs-sheet').hidden = true; });
+  $('song-new').addEventListener('click', async function () { await saveNow(); await newSong(); $('songs-sheet').hidden = true; });
+  $('songs-list').addEventListener('click', async function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    var id = b.dataset.id, a = b.dataset.a;
+    if (a !== 'del') confirmSongDel = null;
+    if (a === 'open') { if (id !== S.songId) await loadSong(id); $('songs-sheet').hidden = true; return; }
+    if (a === 'rename') { renaming = id; }
+    else if (a === 'rename-ok') {
+      var v = ($('rename-in').value || '').trim(); renaming = null;
+      if (v) { var m = await window.Store.getSong(id); m.name = v; await window.Store.putSong(m); if (id === S.songId) { S.songName = v; render(); } }
+    } else if (a === 'dup') {
+      var src = await window.Store.getSong(id);
+      var cp = JSON.parse(JSON.stringify(src)); cp.id = window.Store.newId(); cp.name = src.name + ' (עותק)'; cp.created = cp.updated = Date.now();
+      await window.Store.putSong(cp);   // הצליל עצמו משותף, לא משוכפל
+    } else if (a === 'del') {
+      if (confirmSongDel !== id) { confirmSongDel = id; await renderSongs(); return; }
+      confirmSongDel = null;
+      var all = await window.Store.allSongs(), victim = all.filter(function (x) { return x.id === id; })[0], keep = {};
+      all.forEach(function (x) { if (x.id !== id) (x.audioIds || []).forEach(function (q) { keep[q] = 1; }); });
+      // מוחקים רק צליל שאף שיר אחר לא משתמש בו
+      if (victim) await window.Store.deleteAudio((victim.audioIds || []).filter(function (q) { return !keep[q]; }));
+      await window.Store.deleteSong(id);
+      if (id === S.songId) { S.songId = null; var rest = all.filter(function (x) { return x.id !== id; }); if (rest.length) { rest.sort(function (x, y) { return y.updated - x.updated; }); await loadSong(rest[0].id); } else await newSong(); }
+    }
+    await renderSongs();
+  });
+  $('songs-list').addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.id === 'rename-in') { var ok = document.querySelector('[data-a="rename-ok"]'); if (ok) ok.click(); } });
+
   function render() {
     var app = $('app');
+    $('song-name').textContent = S.songName;
+    scheduleSave();
     document.documentElement.style.setProperty('--hue', hueOf(S.mix.length));
     $('mixin-btn').disabled = !(workTrack() && S.mode === 'idle');
     $('del-btn').disabled = !(workTrack() && S.mode === 'idle');
@@ -990,4 +1169,5 @@
   window.addEventListener('resize', draw);
   render();
   requestAnimationFrame(frame);
+  startup();
 })();
