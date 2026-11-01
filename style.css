@@ -171,3 +171,17 @@ input.mixv { accent-color: #C9CED6; }
 .transport { padding: 0; }
 .mix-btns { gap: 6px; }
 #mixlist-btn { white-space: nowrap; font-size: 12px; padding: 0 6px; }
+
+/* פיידרים צרים */
+.faders { width: 132px; gap: 4px; }
+.fader { padding: 8px 1px 6px; gap: 4px; border-radius: 12px; }
+.fader label, .fader .cap { font-size: 10px; }
+input.vertical { width: 22px; }
+.db { font-size: 9px; }
+.meter-box { flex: 0 0 26px; }
+.meter { width: 8px; }
+.clip { font-size: 8px; }
+.btn.tool { min-height: 30px; font-size: 12px; padding: 0 9px; border-radius: 15px; flex: none; }
+.btn.tool svg { width: 15px; height: 15px; }
+#del-btn:not(:disabled) { background: rgba(255,90,106,0.12); border-color: rgba(255,90,106,0.3); color: #FFC2C8; }
+#timeline { touch-action: none; }

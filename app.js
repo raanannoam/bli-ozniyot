@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '11';
+  var CODE_VERSION = '12';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -34,6 +34,7 @@
     { k: 'drums', name: 'תופים' }, { k: 'perc', name: 'כלי הקשה', prefer: 'low' }, { k: 'keys', name: 'מקלדים' },
     { k: 'violin', name: 'כינור', prefer: 'low' }, { k: 'other', name: 'אחר' }
   ];
+  var LEVEL_OK = { medium: 1, strong: 1, max: 1 };
   var LEVEL_GAIN = { base: 0.7, mid: 0.85, top: 1.0 };
   var METERS = ['2/4', '3/4', '4/4', '5/4', '7/4', '5/8', '6/8', '7/8', '9/8', '10/8', '12/8'];
   var GROUPS = { '5/8': [3, 2], '6/8': [3, 3], '7/8': [2, 2, 3], '9/8': [3, 2, 2, 2], '10/8': [3, 3, 2, 2], '12/8': [3, 3, 3, 3] };
@@ -49,12 +50,14 @@
     cursorBar: 0,          // נקודת ההתחלה, במספר תיבה (0 = תיבה 1)
     take: null,            // { data, sr, start, punch, latency }
     stoppedAt: 0,          // מיקום הסמן הלבן כשהכול עצור
-    level: (function () { try { var v = localStorage.getItem('bli-level2'); return v && v !== 'gentle' ? v : 'strong'; } catch (e) { return 'strong'; } })()
+    level: (function () { try { var v = localStorage.getItem('bli-level3'); return v && LEVEL_OK[v] ? v : 'strong'; } catch (e) { return 'strong'; } })(),
+    endBar: null,          // סמן הסיום, במספר תיבה. null = סוף השיר (מקליטים עד שעוצרים)
+    undo: []
   };
 
   var ctx = null, clickBus, takeBus, mixBus, buffers = {}, mixSrc = null, recRef = null;
   var recNode = null, micReady = false, chunks = [];
-  var songT0 = 0, nextBeat = 0, schedTimer = null, takeSrc = null, recFrom = 0, recClicks = [], livePeaks = [], liveLat = 0;
+  var songT0 = 0, nextBeat = 0, schedTimer = null, takeSrc = null, recFrom = 0, recClicks = [], livePeaks = [], liveLat = 0, recLimit = null;
   var wakeLock = null, peakHold = 0;
 
   // ---------- חישובי קצב ----------
@@ -169,7 +172,12 @@
 
   function takeData(tk) { return tk.useClean && tk.clean ? tk.clean : tk.data; }
   function clipStart(tk) { return tk.start + tk.latencyShift; }            // זמן השיר של הדגימה הראשונה
-  function clipEnd(tk) { return clipStart(tk) + tk.data.length / tk.sr; }
+  function clipEnd(tk) {
+    if (tk.erase) return tk.endT;
+    var e = clipStart(tk) + tk.data.length / tk.sr;
+    return tk.limit != null ? Math.min(e, tk.limit) : e;
+  }
+  function goodLevel() { return S.level !== 'orig' ? S.level : (S.lastLevel || 'strong'); }
 
   // ערוץ העבודה: כל ההקלטות מודבקות על ציר אחד. הקלטה חדשה מכסה את מה שמתחתיה (העליון מנצח),
   // עם מעבר רך של 5 אלפיות שנייה בקצוות. הישנות לא נמחקות.
@@ -178,10 +186,17 @@
   function workTrack() {
     if (workCache) return workCache;
     if (!S.clips.length) return null;
-    var sr = S.clips[0].sr, end = 0;
-    S.clips.forEach(function (c) { end = Math.max(end, clipEnd(c)); });
+    var sr = 48000; S.clips.forEach(function (c) { if (c.sr) sr = c.sr; });
+    var end = 0;
+    S.clips.forEach(function (c) { if (!c.erase) end = Math.max(end, clipEnd(c)); });
+    if (end <= 0) return null;
     var out = new Float32Array(Math.ceil(end * sr) + 1), fade = Math.round(0.005 * sr);
     S.clips.forEach(function (c) {
+      if (c.erase) {
+        var ea = Math.max(0, Math.round(c.punch * sr)), eb = Math.min(out.length, Math.round(c.endT * sr));
+        for (var ii = ea; ii < eb; ii++) { var ww = Math.min(1, (ii - ea) / fade, (eb - 1 - ii) / fade); out[ii] *= (1 - Math.max(0, ww)); }
+        return;
+      }
       var src = takeData(c), st = clipStart(c);
       var a = Math.max(0, Math.round(c.punch * sr)), b = Math.min(out.length, Math.floor(clipEnd(c) * sr));
       for (var i = a; i < b; i++) {
@@ -197,7 +212,7 @@
   function playTake(fromSec) {
     var wt = workTrack();
     if (!wt) return;
-    var sr = S.clips[0].sr, begin = Math.max(0, fromSec);
+    var sr = ctx.sampleRate, begin = Math.max(0, fromSec);
     if (begin * sr >= wt.length) return;
     var buf = ctx.createBuffer(1, wt.length, sr);
     buf.copyToChannel(wt, 0);
@@ -250,6 +265,7 @@
       return;
     }
     chunks = []; recClicks = []; livePeaks = []; liveLat = lastLatency() || 0;
+    recLimit = S.endBar !== null ? S.endBar * barDur() : null;
     recFrom = cursorSec() - S.pre * barDur();
     S.mode = 'rec';
     // מה שהרמקול ינגן מהמיכל, בעוצמה הנוכחית: זה ה"רקע" שנחסיר אחר כך
@@ -290,6 +306,8 @@
     var lat = measureLatency(take), prev = lastLatency();
     if (lat !== null) { take.measured = lat; take.latencyShift = -lat; rememberLatency(lat); }
     else if (prev !== null) { take.measured = prev; take.latencyShift = -prev; }
+    take.limit = recLimit;
+    pushUndo();
     S.take = take;
     S.clips.push(take);
     invalidateWork();
@@ -315,12 +333,13 @@
         var off = Math.round((tk.start - lat) * tk.sr), src = tk.ref.data, gref = tk.ref.gain;
         for (var q = 0; q < ref.length; q++) { var j = q + off; if (j >= 0 && j < src.length) ref[q] = src[j] * gref; }
       }
-      var r = window.ClickDSP.removeAll(tk.data, tk.sr, list, ref, { level: S.level === 'orig' ? 'strong' : S.level });
+      var r = window.ClickDSP.removeAll(tk.data, tk.sr, list, ref, { level: goodLevel() });
       if (r.ok) {
         tk.s1 = r.stage1; tk.est = r.est;
-        tk.clean = S.level === 'orig' ? window.ClickDSP.stage2(r.stage1, r.est, window.ClickDSP.LEVELS.strong) : r.clean;
-        tk.cleanLevel = S.level === 'orig' ? 'strong' : S.level;
-        tk.useClean = S.level !== 'orig';
+        tk.clean = r.clean; tk.cleanLevel = goodLevel();
+        // הקלטה חדשה תמיד נקייה. אם היינו במצב "מקור", חוזרים לרמה האחרונה בכל הערוץ
+        if (S.level === 'orig') { S.level = goodLevel(); S.clips.forEach(function (c) { if (c.clean) c.useClean = true; }); }
+        tk.useClean = true;
         invalidateWork();
         tk.ref = null;
         setStatus(r.bgOk ? 'הקליק והמיקס הוסרו מההקלטה. למעלה אפשר לבחור עוצמת הסרה, או לשמוע את המקור.' : 'הקליק הוסר. למעלה אפשר לבחור כמה חזק להסיר, או לשמוע את המקור.');
@@ -408,8 +427,15 @@
   var cv = $('timeline'), wrap = $('timeline-wrap'), g2 = cv.getContext('2d');
   var layout = { pxPerBar: 80, bars: 8, padTop: 26 };
 
+  // סוף התוכן בערוץ העבודה (בשניות)
+  function contentEnd() { var e = 0; visibleSegments().forEach(function (s) { e = Math.max(e, s.b); }); return e; }
+  // מיקום סמן הסיום: תיבה שנבחרה, או אחרי התוכן ("סוף")
+  function endSec() {
+    if (S.endBar !== null) return S.endBar * barDur();
+    return Math.max(cursorSec() + barDur(), Math.ceil(contentEnd() / barDur() - 1e-6) * barDur());
+  }
   function songBars() {
-    var end = cursorSec() + barDur() * 2;
+    var end = Math.max(cursorSec() + barDur() * 2, endSec() + barDur());
     S.clips.forEach(function (c) { end = Math.max(end, clipEnd(c)); });
     S.mix.forEach(function (m) { end = Math.max(end, m.data.length / m.sr); });
     if (S.mode !== 'idle') end = Math.max(end, songNow() + barDur());
@@ -457,18 +483,21 @@
     drawMix(mixTop, mixH, w);
     var wt = workTrack();
     if (wt) {
-      var wsr = S.clips[0].sr, mid = trackTop + trackH / 2, spp = wsr * barDur() / layout.pxPerBar;
-      // מסגרת לכל הקלטה; הישנות קודם, כך שהחדשה מעליהן
-      S.clips.forEach(function (c, ci) {
-        var x0 = xOf(c.punch), x1 = xOf(clipEnd(c));
-        if (x1 <= x0) return;
-        var newest = ci === S.clips.length - 1;
-        g2.fillStyle = newest ? 'hsla(150,60%,45%,0.18)' : 'hsla(150,40%,40%,0.12)';
+      var wsr = ctx ? ctx.sampleRate : 48000, mid = trackTop + trackH / 2, spp = wsr * barDur() / layout.pxPerBar;
+      // מסגרת לכל קטע שנשמע בפועל (אחרי כיסויים ומחיקות). החדש מודגש
+      var segs = visibleSegments(), last = -1;
+      S.clips.forEach(function (c, ci) { if (!c.erase) last = ci; });
+      segs.forEach(function (sg) {
+        var x0 = xOf(sg.a), x1 = xOf(sg.b);
+        if (x1 - x0 < 3) return;
+        var newest = sg.owner === last;
+        g2.fillStyle = newest ? 'hsla(var(--hue),60%,45%,0.18)'.replace('var(--hue)', hueOf(S.mix.length)) : 'rgba(150,200,175,0.10)';
         roundRect(x0 + 1, trackTop, x1 - x0 - 2, trackH, 10); g2.fill();
         g2.strokeStyle = newest ? acc : 'rgba(150,200,175,0.45)'; g2.lineWidth = 1.5; g2.stroke();
       });
       g2.fillStyle = acc;
-      var lo = Infinity; S.clips.forEach(function (c) { lo = Math.min(lo, c.punch); });
+      var lo = Infinity; segs.forEach(function (sg) { lo = Math.min(lo, sg.a); });
+      if (lo === Infinity) lo = 0;
       for (var px = Math.ceil(xOf(lo)) + 3; px < xOf(wt.length / wsr) - 3; px += 2) {
         var i0 = Math.floor(px / layout.pxPerBar * barDur() * wsr), i1 = i0 + Math.ceil(spp * 2), pk = 0;
         for (var i = Math.max(0, i0); i < Math.min(wt.length, i1); i++) { var a = Math.abs(wt[i]); if (a > pk) pk = a; }
@@ -503,11 +532,20 @@
         g2.fillStyle = now < cursorSec() ? '#0C0E12' : '#fff'; g2.textAlign = 'center'; g2.fillText(lbl, tx + tw / 2, trackTop + 21); g2.textAlign = 'start';
       }
     }
-    // נקודת ההתחלה
-    var cx = xOf(cursorSec());
-    g2.fillStyle = '#FF5A6A'; g2.fillRect(cx - 1, 0, 2, h);
-    g2.fillStyle = 'rgba(238,51,72,0.9)'; roundRect(cx + 4, 2, 44, 17, 4); g2.fill();
-    g2.fillStyle = '#fff'; g2.font = '500 10px Heebo, sans-serif'; g2.textAlign = 'center'; g2.fillText('התחלה', cx + 26, 14); g2.textAlign = 'start';
+    // שני הסמנים: התחלה וסיום, עם ידיות, והאזור שביניהם
+    var cx = xOf(cursorSec()), ex = xOf(endSec());
+    g2.fillStyle = 'rgba(255,90,106,0.07)'; g2.fillRect(cx, 0, ex - cx, h);
+    [[cx, 'התחלה'], [ex, S.endBar === null ? 'סוף' : 'סיום']].forEach(function (m, mi) {
+      var mx = m[0];
+      g2.fillStyle = mi === 1 && S.endBar === null ? 'rgba(255,90,106,0.55)' : '#FF5A6A'; g2.fillRect(mx - 1, 0, 2, h);
+      g2.fillStyle = 'rgba(238,51,72,0.95)'; roundRect(mx - 14, 0, 28, 22, 7); g2.fill();
+      g2.fillStyle = 'rgba(255,255,255,0.9)';
+      for (var gi = -1; gi <= 1; gi++) g2.fillRect(mx + gi * 4 - 0.75, 6, 1.5, 10);
+      g2.font = '500 10px Heebo, sans-serif'; g2.textAlign = 'left';
+      var lw2 = g2.measureText(m[1]).width + 10;
+      g2.fillStyle = 'rgba(238,51,72,0.85)'; roundRect(mx + 16, 3, lw2, 16, 4); g2.fill();
+      g2.fillStyle = '#fff'; g2.fillText(m[1], mx + 21, 15); g2.textAlign = 'start';
+    });
     // סמן ניגון
     var pos = S.mode === 'idle' ? S.stoppedAt : songNow();
     var px2 = xOf(Math.max(pos, S.mode === 'rec' ? recFrom : 0));
@@ -519,6 +557,27 @@
       if (px2 > wrap.scrollLeft + vw * 0.8 || px2 < wrap.scrollLeft) wrap.scrollLeft = Math.max(0, px2 - vw * 0.3);
     }
   }
+  // הקטעים שנשמעים בערוץ העבודה: כל הקלטה מכסה את מה שמתחתיה, מחיקה מורידה
+  function visibleSegments() {
+    var segs = [];
+    function cut(a, b) {
+      var out = [];
+      segs.forEach(function (s) {
+        if (s.b <= a || s.a >= b) { out.push(s); return; }
+        if (s.a < a) out.push({ a: s.a, b: a, owner: s.owner });
+        if (s.b > b) out.push({ a: b, b: s.b, owner: s.owner });
+      });
+      segs = out;
+    }
+    S.clips.forEach(function (c, ci) {
+      var a = c.punch, b = clipEnd(c);
+      if (b <= a) return;
+      cut(a, b);
+      if (!c.erase) segs.push({ a: a, b: b, owner: ci });
+    });
+    return segs.sort(function (x, y) { return x.a - y.a; });
+  }
+
   // ערוץ המיכל: גל אחד. כל עמודה בצבע של הקלטה אחרת מבין אלה שמתנגנות באותו רגע, בגובה הממוצע
   var mixPeaksKey = '', mixPeaks = null;
   function drawMix(y0, hh, w) {
@@ -558,17 +617,71 @@
     g2.arcTo(x, y + h, x, y, r); g2.arcTo(x, y, x + w, y, r); g2.closePath();
   }
 
-  // נגיעה בציר הזמן קובעת את נקודת ההתחלה, צמודה לתחילת תיבה
-  var downX = null;
-  cv.addEventListener('pointerdown', function (e) { downX = e.clientX; });
-  cv.addEventListener('pointerup', function (e) {
-    if (downX === null || Math.abs(e.clientX - downX) > 8 || S.mode !== 'idle') { downX = null; return; }
-    downX = null;
+  // ציר הזמן: גרירת ידית מזיזה סמן (נצמד לתיבות), גרירה במקום אחר גוללת, ונגיעה קובעת את ההתחלה
+  var gest = null;
+  cv.addEventListener('pointerdown', function (e) {
+    var r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    var which = null;
+    if (y < 34 && S.mode === 'idle') {
+      var ds = Math.abs(x - xOf(cursorSec())), de = Math.abs(x - xOf(endSec()));
+      if (Math.min(ds, de) < 24) which = de < ds ? 'end' : 'start';
+    }
+    gest = { x0: e.clientX, sl: wrap.scrollLeft, which: which, moved: false };
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (!gest) return;
+    if (Math.abs(e.clientX - gest.x0) > 8) gest.moved = true;
+    if (!gest.which) { wrap.scrollLeft = gest.sl - (e.clientX - gest.x0); return; }
+    var r = cv.getBoundingClientRect(), bar = Math.round((e.clientX - r.left) / layout.pxPerBar);
+    if (gest.which === 'start') {
+      var maxB = S.endBar !== null ? S.endBar - 1 : layout.bars - 1;
+      S.cursorBar = Math.max(0, Math.min(maxB, bar)); S.stoppedAt = cursorSec();
+      setStatus('התחלה: תיבה ' + (S.cursorBar + 1));
+    } else {
+      var lastBar = Math.ceil(contentEnd() / barDur() - 1e-6);
+      bar = Math.max(S.cursorBar + 1, bar);
+      S.endBar = bar >= Math.max(lastBar, S.cursorBar + 1) + 1 ? null : bar;
+      setStatus(S.endBar === null ? 'סיום: סוף השיר. מקליטים עד שעוצרים' : 'סיום: תחילת תיבה ' + (S.endBar + 1));
+    }
+    render();
+  });
+  function endGesture(e) {
+    if (!gest) return;
+    var g = gest; gest = null;
+    if (g.moved || g.which || S.mode !== 'idle') return;
     var r = cv.getBoundingClientRect();
-    var bar = Math.round((e.clientX - r.left) / layout.pxPerBar);
-    S.cursorBar = Math.max(0, bar);
+    var bar = Math.max(0, Math.round((e.clientX - r.left) / layout.pxPerBar));
+    if (S.endBar !== null && bar >= S.endBar) S.endBar = null;
+    S.cursorBar = bar;
     S.stoppedAt = cursorSec();
     setStatus('ההקלטה תתחיל בתיבה ' + (S.cursorBar + 1));
+    render();
+  }
+  cv.addEventListener('pointerup', endGesture);
+  cv.addEventListener('pointercancel', function () { gest = null; });
+
+  // ---------- מחיקה וביטול ----------
+  function pushUndo() {
+    S.undo.push({ clips: S.clips.slice(), mix: S.mix.slice(), take: S.take });
+    if (S.undo.length > 50) S.undo.shift();
+  }
+  $('del-btn').addEventListener('click', function () {
+    if (S.mode !== 'idle' || !S.clips.length) return;
+    var a = cursorSec(), b = endSec();
+    if (b <= a) return;
+    pushUndo();
+    S.clips.push({ erase: true, punch: a, endT: b });
+    invalidateWork();
+    setStatus('נמחק מתיבה ' + (S.cursorBar + 1) + ' עד ' + (S.endBar === null ? 'הסוף' : 'תיבה ' + S.endBar) + '. "ביטול" מחזיר.');
+    render();
+  });
+  $('undo-btn').addEventListener('click', function () {
+    if (S.mode !== 'idle' || !S.undo.length) return;
+    var u = S.undo.pop();
+    S.clips = u.clips; S.mix = u.mix; S.take = u.take;
+    invalidateWork(); invalidateMix();
+    setStatus('הפעולה האחרונה בוטלה');
     render();
   });
 
@@ -678,12 +791,13 @@
   $('save-btn').addEventListener('click', saveTake);
   document.querySelectorAll('.lv').forEach(function (b) {
     b.addEventListener('click', function () {
-      if (!S.take || !S.take.s1) return;
+      if (!S.clips.some(function (c) { return c.s1; })) return;
       var lv = b.dataset.level;
       var was = S.mode === 'play', pos = songNow();
       if (was) stop();
       S.level = lv;
-      try { localStorage.setItem('bli-level2', lv); } catch (e) {}
+      // "מקור" הוא רק להשוואה: לא נזכר, ולא נכנס למיקס
+      if (lv !== 'orig') { S.lastLevel = lv; try { localStorage.setItem('bli-level3', lv); } catch (e) {} }
       // הרמה חלה על כל ההקלטות בערוץ
       S.clips.forEach(function (tk) {
         if (!tk.s1) return;
@@ -717,10 +831,20 @@
   $('name-chips').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) $('name-input').value = b.dataset.n; });
   $('name-close').addEventListener('click', function () { $('name-sheet').hidden = true; });
   $('name-ok').addEventListener('click', function () {
+    // למיקס נכנסת תמיד הגרסה הנקייה, ברמה האחרונה שנבחרה (גם אם עכשיו מאזינים ל"מקור")
+    var lv = goodLevel();
+    S.clips.forEach(function (c) {
+      if (!c.s1) return;
+      if (c.cleanLevel !== lv) { c.clean = window.ClickDSP.stage2(c.s1, c.est, window.ClickDSP.LEVELS[lv]); c.cleanLevel = lv; }
+      c.useClean = true;
+    });
+    S.level = lv;
+    invalidateWork();
     var wt = workTrack(); if (!wt) return;
     var name = $('name-input').value.trim() || ('הקלטה ' + (S.mix.length + 1));
-    S.mix.push({ name: name, data: Float32Array.from(wt), sr: S.clips[0].sr, muted: false });
-    S.clips = []; S.take = null; invalidateWork(); invalidateMix();
+    pushUndo();
+    S.mix.push({ name: name, data: Float32Array.from(wt), sr: ctx ? ctx.sampleRate : 48000, muted: false, clips: S.clips.slice() });
+    S.clips = []; S.take = null; S.endBar = null; invalidateWork(); invalidateMix();
     $('save-btn').disabled = true;
     $('name-sheet').hidden = true;
     S.instrument = null; $('suggest-btn').hidden = true;
@@ -750,12 +874,17 @@
     if (b.dataset.a === 'mute') { m.muted = !m.muted; invalidateMix(); confirmDel = -1; }
     else if (b.dataset.a === 'del') {
       if (confirmDel !== i) { confirmDel = i; renderMixList(); return; }
-      S.mix.splice(i, 1); invalidateMix(); confirmDel = -1;
+      pushUndo(); S.mix.splice(i, 1); invalidateMix(); confirmDel = -1;
     } else if (b.dataset.a === 'edit') {
       if (S.clips.length) { setStatus('בערוץ העבודה יש הקלטה. קודם להכניס אותה למיקס, ואז להחזיר את "' + m.name + '" לעריכה.'); $('mix-sheet').hidden = true; render(); return; }
-      var first = 0; while (first < m.data.length && Math.abs(m.data[first]) < 1e-6) first++;
-      var clip = { data: m.data, sr: m.sr, start: 0, latencyShift: 0, punch: first / m.sr, measured: null, useClean: false };
-      S.clips = [clip]; S.take = clip; invalidateWork();
+      pushUndo();
+      if (m.clips && m.clips.length) { S.clips = m.clips.slice(); }
+      else {
+        var first = 0; while (first < m.data.length && Math.abs(m.data[first]) < 1e-6) first++;
+        S.clips = [{ data: m.data, sr: m.sr, start: 0, latencyShift: 0, punch: first / m.sr, measured: null, useClean: false }];
+      }
+      S.take = null; S.clips.forEach(function (c) { if (!c.erase) S.take = c; });
+      invalidateWork();
       S.mix.splice(i, 1); invalidateMix();
       $('save-btn').disabled = false;
       $('mix-sheet').hidden = true;
@@ -769,7 +898,10 @@
   function render() {
     var app = $('app');
     document.documentElement.style.setProperty('--hue', hueOf(S.mix.length));
-    $('mixin-btn').disabled = !(S.clips.length && S.mode === 'idle');
+    $('mixin-btn').disabled = !(workTrack() && S.mode === 'idle');
+    $('del-btn').disabled = !(workTrack() && S.mode === 'idle');
+    $('undo-btn').disabled = !(S.undo.length && S.mode === 'idle');
+    $('save-btn').disabled = !workTrack();
     $('mix-count').textContent = S.mix.length ? '(' + S.mix.length + ')' : '';
     app.classList.toggle('recording', S.mode === 'rec');
     app.classList.toggle('playing', S.mode === 'play');
@@ -783,11 +915,11 @@
     $('play-btn').setAttribute('aria-label', S.mode === 'play' ? 'השהיה' : 'ניגון');
     if (S.mode === 'rec') setStatus('הקדמה של ' + (S.pre === 1 ? 'תיבה אחת' : '2 תיבות') + ', ואז הקלטה מתיבה ' + (S.cursorBar + 1) + ' עד שעוצרים');
     else if (S.mode === 'play') setStatus('מנגן');
-    $('latency').textContent = S.take && S.take.measured !== null ? 'השהיה: ' + Math.round(S.take.measured * 1000) + 'ms' : '';
-    var hasClean = !!(S.take && S.take.s1);
+    $('latency').textContent = S.take && S.take.measured != null ? 'השהיה: ' + Math.round(S.take.measured * 1000) + 'ms' : '';
+    var hasClean = S.clips.some(function (c) { return c.s1; });
     $('levels').hidden = !hasClean;
     if (hasClean) {
-      var cur = S.take.useClean ? S.take.cleanLevel : 'orig';
+      var cur = S.level;
       document.querySelectorAll('.lv').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.level === cur)); });
     }
     renderDrum();
@@ -805,6 +937,7 @@
     fill.style.setProperty('--meter-h', fill.parentElement.clientHeight + 'px');
     if (p >= 0.98) clipUntil = performance.now() + 1500;
     clip.classList.toggle('on', performance.now() < clipUntil);
+    if (S.mode === 'rec' && recLimit !== null && songNow() - liveLat >= recLimit + 0.05) stop();
     if (S.mode !== 'idle') {
       if (S.mode === 'rec' && songNow() >= cursorSec() && $('status').textContent.indexOf('מקליט') !== 0) setStatus('מקליט… מתיבה ' + (S.cursorBar + 1));
       draw();

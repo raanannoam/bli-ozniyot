@@ -8,7 +8,7 @@
 <title>בלי אוזניות</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
 <div class="app" id="app">
@@ -70,8 +70,13 @@
   <!-- מרכז -->
   <main class="center">
     <div class="status-row">
+      <button class="btn tool" id="del-btn" disabled>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg>
+        מחיקה</button>
+      <button class="btn tool" id="undo-btn" disabled aria-label="ביטול הפעולה האחרונה">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
       <button class="btn inst" id="inst-btn">כלי: <b id="inst-name">בחרו</b></button>
-      <span class="status" id="status">נגיעה בציר הזמן קובעת מאיפה מקליטים</span>
+      <span class="status" id="status">נגיעה בציר הזמן קובעת מאיפה מקליטים. את הסמנים גוררים מהידיות</span>
       <button class="btn suggest" id="suggest-btn" hidden></button>
       <div class="levels" id="levels" role="group" aria-label="הסרת קליק" hidden>
         <button class="btn lv" data-level="orig">מקור</button>
@@ -163,8 +168,8 @@
   <p>סובבו את הטלפון לרוחב</p>
 </div>
 
-<script>window.BLI_PAGE_VERSION = "11";</script>
-<script src="dsp.js?v=11"></script>
-<script src="app.js?v=11"></script>
+<script>window.BLI_PAGE_VERSION = "12";</script>
+<script src="dsp.js?v=12"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
