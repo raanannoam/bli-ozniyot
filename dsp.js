@@ -87,7 +87,16 @@
 
   // ---------- שלב 1 ----------
   // clicks: [{ idx: מיקום תחילת הקליק בדגימות בתוך data, pos: מספר הפעמה בתיבה, pre: האם בהקדמה }]
+  // עוטף את stage1 בריפוד של שקט בשני הקצוות, כדי שגם קליק בהתחלה או ממש לפני העצירה יטופל
   function stage1(data, sr, clicks, opts) {
+    var P = Math.round((LEN_MS + 2 * MAXLAG_MS + PRE_MS) * sr / 1000) + 64;
+    var padded = new Float32Array(data.length + 2 * P);
+    padded.set(data, P);
+    var r = stage1Core(padded, sr, clicks.map(function (c) { return { idx: c.idx + P, pos: c.pos, pre: c.pre }; }), opts);
+    return { clean: r.clean.slice(P, P + data.length), est: r.est.slice(P, P + data.length), ok: r.ok };
+  }
+
+  function stage1Core(data, sr, clicks, opts) {
     opts = opts || {};
     var PRE = Math.round(PRE_MS * sr / 1000), L = Math.round(LEN_MS * sr / 1000);
     var M = Math.round(MAXLAG_MS * sr / 1000), FIT = Math.round(FIT_MS * sr / 1000);

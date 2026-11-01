@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // אם הדפדפן הביא דף ישן מהזיכרון יחד עם קוד חדש, טוענים מחדש פעם אחת
-  var CODE_VERSION = '13';
+  var CODE_VERSION = '14';
   if (window.BLI_PAGE_VERSION !== CODE_VERSION) {
     var tried = false;
     try { tried = sessionStorage.getItem('bli-reload') === CODE_VERSION; sessionStorage.setItem('bli-reload', CODE_VERSION); } catch (e) {}
@@ -52,7 +52,8 @@
     stoppedAt: 0,          // מיקום הסמן הלבן כשהכול עצור
     level: (function () { try { var v = localStorage.getItem('bli-level3'); return v && LEVEL_OK[v] ? v : 'strong'; } catch (e) { return 'strong'; } })(),
     endBar: 4,             // סמן הסיום, במספר תיבה (תמיד יש לו מקום)
-    endInf: true,          // אינסוף: מקליטים בלי גבול, עד שעוצרים. נגיעה בידית של הסיום מחליפה
+    endInf: true,
+    zoom: 1,               // זום רוחבי: 1 = כ־8 תיבות על המסך          // אינסוף: מקליטים בלי גבול, עד שעוצרים. נגיעה בידית של הסיום מחליפה
     undo: []
   };
 
@@ -444,7 +445,7 @@
     var dpr = window.devicePixelRatio || 1;
     var h = wrap.clientHeight;
     layout.bars = songBars();
-    layout.pxPerBar = Math.max(70, wrap.clientWidth / 8);
+    layout.pxPerBar = Math.max(70, wrap.clientWidth / 8) * S.zoom;
     var w = Math.max(wrap.clientWidth, layout.bars * layout.pxPerBar);
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
@@ -623,8 +624,25 @@
   }
 
   // ציר הזמן: גרירת ידית מזיזה סמן (נצמד לתיבות), גרירה במקום אחר גוללת, ונגיעה קובעת את ההתחלה
-  var gest = null;
+  var gest = null, pts = {}, pinch = null;
+  function setZoom(z, anchorClientX) {
+    z = Math.max(0.5, Math.min(8, z));
+    var r = wrap.getBoundingClientRect(), ax = (anchorClientX == null ? r.left + r.width / 2 : anchorClientX) - r.left;
+    var sec = (wrap.scrollLeft + ax) / layout.pxPerBar * barDur();
+    S.zoom = z; draw();
+    wrap.scrollLeft = Math.max(0, sec / barDur() * layout.pxPerBar - ax);
+    $('zoom-val').textContent = '×' + (Math.round(S.zoom * 10) / 10);
+  }
+  $('zoom-in').addEventListener('click', function () { setZoom(S.zoom * 1.5); });
+  $('zoom-out').addEventListener('click', function () { setZoom(S.zoom / 1.5); });
   cv.addEventListener('pointerdown', function (e) {
+    pts[e.pointerId] = e.clientX;
+    var ids = Object.keys(pts);
+    if (ids.length === 2) {   // צביטה בשתי אצבעות: זום
+      gest = null;
+      pinch = { d: Math.abs(pts[ids[0]] - pts[ids[1]]) || 1, z: S.zoom };
+      return;
+    }
     var r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
     var which = null;
     if (y < 34 && S.mode === 'idle') {
@@ -635,6 +653,13 @@
     cv.setPointerCapture(e.pointerId);
   });
   cv.addEventListener('pointermove', function (e) {
+    if (pts[e.pointerId] !== undefined) pts[e.pointerId] = e.clientX;
+    if (pinch) {
+      var ids = Object.keys(pts); if (ids.length < 2) return;
+      var d = Math.abs(pts[ids[0]] - pts[ids[1]]) || 1;
+      setZoom(pinch.z * d / pinch.d, (pts[ids[0]] + pts[ids[1]]) / 2);
+      return;
+    }
     if (!gest) return;
     if (Math.abs(e.clientX - gest.x0) > 8) gest.moved = true;
     if (!gest.which) { wrap.scrollLeft = gest.sl - (e.clientX - gest.x0); return; }
@@ -674,8 +699,9 @@
     var n = S.endBar - S.cursorBar;
     return ', ' + (n === 1 ? 'תיבה אחת' : n + ' תיבות');
   }
-  cv.addEventListener('pointerup', endGesture);
-  cv.addEventListener('pointercancel', function () { gest = null; });
+  function lift(e) { delete pts[e.pointerId]; if (Object.keys(pts).length < 2) { if (pinch) { pinch = null; gest = null; return true; } } return false; }
+  cv.addEventListener('pointerup', function (e) { if (lift(e)) return; endGesture(e); });
+  cv.addEventListener('pointercancel', function (e) { lift(e); gest = null; });
 
   // ---------- מחיקה וביטול ----------
   function pushUndo() {

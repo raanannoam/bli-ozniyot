@@ -8,7 +8,7 @@
 <title>בלי אוזניות</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
 <div class="app" id="app">
@@ -86,8 +86,15 @@
       </div>
       <span class="latency num" id="latency"></span>
     </div>
-    <div class="glass timeline-wrap" id="timeline-wrap" dir="ltr">
-      <canvas id="timeline"></canvas>
+    <div class="tl-box">
+      <div class="glass timeline-wrap" id="timeline-wrap" dir="ltr">
+        <canvas id="timeline"></canvas>
+      </div>
+      <div class="zoom glass" dir="ltr">
+        <button class="btn" id="zoom-out" aria-label="התרחקות">−</button>
+        <span class="num" id="zoom-val">×1</span>
+        <button class="btn" id="zoom-in" aria-label="התקרבות">+</button>
+      </div>
     </div>
   </main>
 
@@ -168,8 +175,8 @@
   <p>סובבו את הטלפון לרוחב</p>
 </div>
 
-<script>window.BLI_PAGE_VERSION = "13";</script>
-<script src="dsp.js?v=13"></script>
-<script src="app.js?v=13"></script>
+<script>window.BLI_PAGE_VERSION = "14";</script>
+<script src="dsp.js?v=14"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
