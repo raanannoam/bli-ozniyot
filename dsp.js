@@ -121,11 +121,18 @@
     var avg = new Float32Array(L);
     any.forEach(function (k) { for (var i = 0; i < L; i++) avg[i] += tpls[k][i] / any.length; });
 
-    clicks.forEach(function (c) {
+    var track = 0, hist = [];
+    clicks.slice().sort(function (a, b) { return a.idx - b.idx; }).forEach(function (c) {
       var tpl = tpls[c.pos] || avg;
-      var s = c.idx - PRE;
+      // מעקב: מחפשים סביב המקום שבו נמצאו הקליקים האחרונים, כי שעון הרמקול ושעון המיקרופון
+      // יכולים לזוז זה מזה לאט, וההפרש מצטבר לאורך ההקלטה
+      var s = c.idx - PRE + track;
       if (s - M < 0 || s + L + M > data.length) return;
       var lag = bestLag(data, s, tpl, M);
+      hist.push(track + lag);
+      if (hist.length > 3) hist.shift();
+      var srt = hist.slice().sort(function (a, b) { return a - b; });
+      track = Math.round(srt[Math.floor(srt.length / 2)]);
       var padded = new Float32Array(L + 2 * M); padded.set(tpl, M);
       var tsh = sincShift(padded, lag);
       var num = 0, den = 0;
@@ -281,7 +288,48 @@
   // rec: ההקלטה. ref: מה שהרמקול ניגן, מיושר בערך להקלטה (אחרי תיקון ההשהיה).
   // לומדים את "צביעת" הרמקול והחדר (תגובת הלם) מכל ההקלטה, ומחסירים את הרקע המשוער.
   // הכלי שמנגנים לא קשור לרקע ברמת הדגימה, ולכן הממוצע על כל ההקלטה מבטל אותו.
+  // הסרת רקע עם תיקון הפרש שעונים:
+  // 1. לכל קטע של 10 שניות לומדים צביעה, ומוצאים בה את ההשהיה (שיא התגובה)
+  // 2. מההשהיות לאורך הזמן מחשבים בכמה שעון המיקרופון מקדים או מאחר את שעון הרמקול
+  // 3. מתקנים את הרקע לפי ההפרש, ולומדים צביעה אחת מכל ההקלטה (הכי מדויק)
   function removeBackground(rec, ref, sr, opts) {
+    opts = opts || {};
+    var SEG = Math.round(10 * sr), n = rec.length;
+    if (n <= SEG * 1.5) return removeBackgroundCore(rec, ref, sr, opts);
+    var pts = [];
+    for (var a0 = 0; a0 + SEG <= n; a0 += SEG / 2) {
+      var r = removeBackgroundCore(rec.subarray(a0, a0 + SEG), ref.subarray(a0, Math.min(ref.length, a0 + SEG)), sr, opts);
+      if (!r.ok || !r.ir) continue;
+      var h = r.ir, pk = 0, pi = 0;
+      for (var i = 1; i < h.length - 1; i++) { var v = Math.abs(h[i]); if (v > pk) { pk = v; pi = i; } }
+      var ya = Math.abs(h[pi - 1] || 0), yb = pk, yc = Math.abs(h[pi + 1] || 0), den = ya - 2 * yb + yc;
+      var frac = den !== 0 ? 0.5 * (ya - yc) / den : 0;
+      pts.push({ t: a0 + SEG / 2, lag: pi + frac, w: pk });
+    }
+    var slope = 0;
+    if (pts.length >= 3) {
+      var sw = 0, st = 0, sl = 0, stt = 0, stl = 0;
+      pts.forEach(function (q) { sw += q.w; st += q.w * q.t; sl += q.w * q.lag; stt += q.w * q.t * q.t; stl += q.w * q.t * q.lag; });
+      var dd = sw * stt - st * st;
+      if (dd > 0) slope = (sw * stl - st * sl) / dd;        // כמה דגימות השהיה נוספות לכל דגימה
+      if (Math.abs(slope) > 2e-4) slope = 0;                  // לא סביר: מתעלמים
+    }
+    var ref2 = ref;
+    if (Math.abs(slope) > 2e-6) {
+      // מזיזים את הרקע בהדרגה, לפי ההפרש: אינטרפולציה קובית
+      ref2 = new Float32Array(ref.length);
+      for (var k = 0; k < ref.length; k++) {
+        var x = k - slope * k, j = Math.floor(x), f = x - j;
+        var p0 = ref[j - 1] || 0, p1 = ref[j] || 0, p2 = ref[j + 1] || 0, p3 = ref[j + 2] || 0;
+        ref2[k] = p1 + 0.5 * f * (p2 - p0 + f * (2 * p0 - 5 * p1 + 4 * p2 - p3 + f * (3 * (p1 - p2) + p3 - p0)));
+      }
+    }
+    var out = removeBackgroundCore(rec, ref2, sr, opts);
+    out.drift = slope;
+    return out;
+  }
+
+  function removeBackgroundCore(rec, ref, sr, opts) {
     opts = opts || {};
     var N = opts.n || 65536, HOP = N / 4, TAPS = opts.taps || 16384, PRE = opts.pre || 480;
     var n = rec.length, i, k, f;
